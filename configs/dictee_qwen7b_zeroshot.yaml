@@ -1,0 +1,30 @@
+# Expérience : dictée 2015, Qwen2.5-VL-7B, zero-shot, grille simplifiée.
+# Un fichier de config = un run reproductible. Copier ce fichier pour décliner
+# d'autres expériences (autre modèle, few-shot, grille complète...).
+
+name: dictee_qwen7b_zeroshot
+seed: 42
+
+model:
+  name: Qwen/Qwen2.5-VL-7B-Instruct
+  kind: vlm
+  temperature: 0.0
+  max_tokens: 2048
+  request_logprobs: true
+
+data:
+  corpus: dictee
+  # Chemins S3 (s3://...) ou locaux. Voir .env pour les identifiants S3.
+  images_path: data/raw/dictee_2015
+  labels_path: data/raw/resultat_dictee_2015.csv
+  grid_path: configs/grille_dictee_2015.json
+  limit: 50          # commencer petit ; mettre null pour tout le corpus
+
+grid:
+  scheme: simplifiee  # cible principale 1/erreur/0 (voir CLAUDE.md §3)
+
+prompt:
+  method: C           # end-to-end (image -> code)
+  n_few_shot: 0
+  enforce_faithful: true
+  read_final_state: true

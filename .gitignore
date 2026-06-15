@@ -1,0 +1,47 @@
+# ─── Données sensibles : JAMAIS dans Git ───────────────────────
+# Les copies d'élèves sont des données de mineurs hébergées sur le SSP Cloud.
+# La barre oblique en tête ancre la règle à la RACINE du dépôt : on ignore
+# /data mais PAS le package source src/evaluation_ecrit/data/.
+/data/
+*.tif
+*.tiff
+*.png
+*.jpg
+*.jpeg
+# Exceptions : on autorise les images de documentation
+!docs/**/*.png
+
+# ─── Secrets ────────────────────────────────────────────────────
+.env
+*.key
+credentials*
+
+# ─── Python ─────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+.python-version
+
+# ─── Outils ─────────────────────────────────────────────────────
+.ruff_cache/
+.mypy_cache/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# ─── Suivi d'expériences ────────────────────────────────────────
+mlruns/
+mlartifacts/
+
+# ─── Éditeurs et OS ─────────────────────────────────────────────
+.vscode/
+.idea/
+.DS_Store
+
+# ─── Notebooks (sorties) ────────────────────────────────────────
+*.ipynb_checkpoints/
