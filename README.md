@@ -33,11 +33,12 @@ La tâche cible est la **grille simplifiée** : `1` correct / `9` erreur / `0` a
 ```bash
 git clone <url-du-depot> evaluation_dictee
 cd evaluation_dictee
-python -m pip install -e ".[dev]"     # layout src/ : l'installation est obligatoire
+uv sync
 ```
 
-> Le paquet s'appelle `evaluation_dictee`. Sans `pip install -e .`, les imports
-> `from evaluation_dictee...` échouent (le dossier `src/` n'est pas dans le PYTHONPATH).
+> Le paquet s'appelle `evaluation_dictee`. `uv sync` installe toutes les dépendances
+> (y compris le groupe `dev`) et configure le mode éditable automatiquement, ce qui
+> rend les imports `from evaluation_dictee...` disponibles.
 
 ### 2. Configurer les accès
 
@@ -55,11 +56,11 @@ Vérifier l'accès aux données et au modèle :
 
 ```bash
 # S3 accessible ?
-python -c "from evaluation_dictee.data.loaders import load_labels; \
+uv run python -c "from evaluation_dictee.data.loaders import load_labels; \
 print(len(load_labels('s3://projet-production-ecrits-depp/resultat_dictee_2015.csv')), 'copies')"
 
 # modèle accessible ?
-python -c "from openai import OpenAI; from evaluation_dictee.config import Secrets; \
+uv run python -c "from openai import OpenAI; from evaluation_dictee.config import Secrets; \
 s=Secrets(); c=OpenAI(base_url=s.llm_base_url, api_key=s.llm_api_key); \
 print(c.chat.completions.create(model='gemma4-26b-moe', \
 messages=[{'role':'user','content':'Dis bonjour'}], max_tokens=10).choices[0].message.content)"
@@ -68,7 +69,7 @@ messages=[{'role':'user','content':'Dis bonjour'}], max_tokens=10).choices[0].me
 ### 3. Lancer un benchmark
 
 ```bash
-python scripts/run_benchmark.py --config configs/dictee_gemma4_zeroshot.yaml
+uv run scripts/run_benchmark.py --config configs/dictee_gemma4_zeroshot.yaml
 ```
 
 Cela produit `data/processed/dictee_gemma4_zeroshot_predictions.jsonl`

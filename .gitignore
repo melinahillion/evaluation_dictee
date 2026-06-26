@@ -11,6 +11,11 @@
 # Exceptions : on autorise les images de documentation
 !docs/**/*.png
 
+# ─── MLflow (suivi local, ne pas versionner) ───────────────────
+mlflow.db
+mlruns/
+mlartifacts/
+
 # ─── Secrets ────────────────────────────────────────────────────
 .env
 *.key
