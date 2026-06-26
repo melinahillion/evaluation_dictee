@@ -24,7 +24,7 @@ dependencies = [
     "scikit-learn>=1.4",
     # Suivi d'expériences
     "mlflow>=2.12",
-    "langfuse>=2.30",
+    "langfuse>=4,<5",
     # Confort
     "tqdm>=4.66",
     "rich>=13.7",

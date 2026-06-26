@@ -12,6 +12,8 @@ from __future__ import annotations
 
 import argparse
 
+from langfuse import get_client
+
 from evaluation_dictee.config import Secrets, load_config
 from evaluation_dictee.data.reference import load_grid
 from evaluation_dictee.evaluation.calibration import referral_curve
@@ -42,14 +44,19 @@ def main() -> None:
         scheme=config.grid.scheme,
     )
 
-    with experiment_run(config):
-        result = run_benchmark(config, scorer)
-        log_metrics(
-            {
-                "raw_agreement": result.metrics.raw_agreement,
-                "cohen_kappa": result.metrics.cohen_kappa,
-            }
-        )
+    try:
+        with experiment_run(config):
+            result = run_benchmark(config, scorer)
+            log_metrics(
+                {
+                    "raw_agreement": result.metrics.raw_agreement,
+                    "cohen_kappa": result.metrics.cohen_kappa,
+                }
+            )
+    finally:
+        # Langfose envoie les traces de façon asynchrone : sans flush explicite,
+        # le script peut se terminer avant l'envoi et perdre les dernières traces.
+        get_client().flush()
 
     logger.info("Accord brut : %.1f%%", result.metrics.raw_agreement * 100)
     logger.info("Kappa de Cohen : %.3f", result.metrics.cohen_kappa)

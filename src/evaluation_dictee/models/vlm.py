@@ -11,7 +11,7 @@ import base64
 import io
 import json
 
-from openai import OpenAI
+from langfuse.openai import OpenAI
 from PIL import Image
 
 from evaluation_dictee.config import ModelConfig, PromptConfig
@@ -100,6 +100,10 @@ class VLMScorer(Scorer):
                 temperature=temp,
                 max_tokens=self.model_config.max_tokens,
                 messages=messages,
+                # Métadonnées Langfuse : retrouver une copie précise et compter
+                # les tentatives directement dans l'UI de tracing.
+                name="score_copy",
+                metadata={"copy_id": copy.copy_id, "attempt": attempt + 1},
             )
             content = response.choices[0].message.content or "{}"
             prediction = self._parse_response(copy, content)
