@@ -70,6 +70,7 @@ def build_copy_comparison(
     grid_items: list[GridItem],
     expert_codes: dict[str, str],
     model_preds: dict[str, dict],
+    raw_transcription: str | None = None,
 ) -> str:
     """Construit le HTML de comparaison pour une copie.
 
@@ -79,6 +80,9 @@ def build_copy_comparison(
         grid_items: items de la grille dans l'ordre (mot attendu).
         expert_codes: {item_id: code_expert}.
         model_preds: {item_id: {"code": ..., "transcription": ..., "confidence": ...}}.
+        raw_transcription: transcription brute de l'étape 1 (approche two_stage).
+            Si fournie, elle est affichée telle quelle ; sinon la transcription est
+            reconstituée en recollant les transcriptions par item (approche end_to_end).
 
     Returns:
         Un fragment HTML pour cette copie.
@@ -108,7 +112,14 @@ def build_copy_comparison(
         if mtrans:
             transcription_libre.append(mtrans)
 
-    transcription_txt = html.escape(" ".join(transcription_libre)) or "<em>(non fournie)</em>"
+    # Priorité à la transcription brute de l'étape 1 (approche two_stage), qui est
+    # la VRAIE lecture du modèle. À défaut, on recolle les transcriptions par item.
+    if raw_transcription and raw_transcription.strip():
+        transcription_txt = html.escape(raw_transcription.strip())
+        source_trans = "étape 1 (HTR)"
+    else:
+        transcription_txt = html.escape(" ".join(transcription_libre)) or "<em>(non fournie)</em>"
+        source_trans = "reconstituée par item"
 
     return f"""
     <section class="copie">
@@ -120,7 +131,7 @@ def build_copy_comparison(
         <img src="{img_data}" alt="copie {html.escape(copy_id)}"/>
       </div>
       <div class="bloc">
-        <h3>3 · Transcription par le modèle</h3>
+        <h3>3 · Transcription par le modèle <small>({source_trans})</small></h3>
         <p class="transcription">{transcription_txt}</p>
       </div>
       <div class="bloc">
@@ -221,6 +232,7 @@ def generate_comparison_report(
     from evaluation_dictee.data.grid import normalize as _normalize
 
     has_trans = "transcription" in predictions_df.columns
+    has_raw = "raw_transcription" in predictions_df.columns
     fragments = []
     for copy_id in copy_ids:
         sub = predictions_df[predictions_df["copy_id"] == copy_id]
@@ -232,6 +244,11 @@ def generate_comparison_report(
             }
             for _, r in sub.iterrows()
         }
+        # Transcription brute de l'étape 1 (identique sur toutes les lignes de la copie)
+        raw_trans = None
+        if has_raw and len(sub):
+            vals = sub["raw_transcription"].dropna()
+            raw_trans = vals.iloc[0] if len(vals) else None
         # Normaliser les codes experts bruts (ex. 3/4/5 → 9 en mode simplifié)
         raw_expert = expert_labels.get(copy_id, {})
         norm_expert = {iid: _normalize(code, scheme) for iid, code in raw_expert.items()}
@@ -242,6 +259,7 @@ def generate_comparison_report(
                 grid_items=grid_items,
                 expert_codes=norm_expert,
                 model_preds=model_preds,
+                raw_transcription=raw_trans,
             )
         )
 

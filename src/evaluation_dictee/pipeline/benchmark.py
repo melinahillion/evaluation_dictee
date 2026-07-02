@@ -137,6 +137,7 @@ def run_benchmark(
                     "y_pred": pred_code,
                     "confidence": conf,
                     "transcription": pred.transcription if pred else None,
+                    "raw_transcription": prediction.raw_transcription,
                 }
             )
 

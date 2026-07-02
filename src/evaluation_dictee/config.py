@@ -91,7 +91,15 @@ class ExperimentConfig(BaseModel):
 
     name: str = Field(..., description="Nom unique du run, utilisé dans MLflow")
     seed: int = 42
+    # Approche d'évaluation :
+    # - "end_to_end" (approche 2) : un VLM lit l'image ET code en une passe.
+    # - "two_stage"  (approche 1) : étape 1 HTR (transcription) puis étape 2
+    #   codage du texte transcrit. Permet d'isoler lecture et jugement.
+    approach: Literal["end_to_end", "two_stage"] = "end_to_end"
     model: ModelConfig
+    # Modèle de l'ÉTAPE 2 (codage textuel) pour l'approche two_stage. Peut être
+    # un modèle texte seul, plus léger. Si absent, on réutilise `model`.
+    model_stage2: ModelConfig | None = None
     data: DataConfig
     grid: GridConfig = GridConfig()
     prompt: PromptConfig = PromptConfig()

@@ -46,6 +46,9 @@ class CopyPrediction:
     items: list[ItemPrediction]
     transcribed: bool = True
     n_attempts: int = 1
+    # Transcription brute produite à l'étape 1 (approche two_stage). None en
+    # approche end_to_end, où la transcription n'existe que par item.
+    raw_transcription: str | None = None
 
 
 class Scorer(ABC):

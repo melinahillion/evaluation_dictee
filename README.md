@@ -24,6 +24,29 @@ automatique à celui d'un correcteur expert. Collaboration **DEPP × SSP Lab (IN
 La tâche cible est la **grille simplifiée** : `1` correct / `9` erreur / `0` absent
 (voir [docs/decisions.md](docs/decisions.md), décision D2).
 
+### Deux approches d'évaluation comparables
+
+Le projet implémente **deux architectures** derrière la même interface `Scorer`,
+donc évaluées par le même code de métriques (comparaison rigoureuse) :
+
+- **`end_to_end` (approche 2)** : un VLM lit l'image ET code en une seule passe.
+  Approche par défaut. Config : `configs/dictee_gemma4_zeroshot.yaml`.
+- **`two_stage` (approche 1)** : étape 1 = transcription HTR (lecture de l'image en
+  texte brut, fautes comprises) ; étape 2 = codage du texte transcrit (sans image,
+  éventuellement par un modèle texte plus léger via `model_stage2`). Isole lecture
+  et jugement. Config : `configs/dictee_gemma4_2stages.yaml`. L'approche se choisit
+  via le champ `approach` du YAML.
+
+### Évaluation dédiée de la transcription (HTR) sur Scoledit
+
+Indépendamment du codage, on peut mesurer la **fidélité de lecture** d'un modèle sur
+l'écriture manuscrite d'enfants via le corpus **Scoledit** (transcriptions de
+référence humaines, fautes préservées). Métriques CER/WER (bruts et normalisés).
+Cela permet de comparer les modèles sur la seule lecture et de distinguer les
+erreurs de lecture de celles de jugement. Config : `configs/htr_gemma4_scoledit.yaml`,
+script : `scripts/run_htr_benchmark.py`, analyse :
+`notebooks/05_analyse_transcription_htr.ipynb`.
+
 ---
 
 ## Démarrage rapide (SSP Cloud / VSCode)
@@ -73,6 +96,15 @@ python scripts/run_benchmark.py --config configs/dictee_gemma4_zeroshot.yaml
 
 Cela produit `data/processed/dictee_gemma4_zeroshot_predictions.jsonl`
 (une ligne par item × copie) et journalise les métriques dans MLflow.
+
+Pour l'**évaluation de la transcription (HTR)** sur Scoledit :
+
+```bash
+python scripts/run_htr_benchmark.py --config configs/htr_gemma4_scoledit.yaml
+```
+
+Cela produit `data/processed/htr_gemma4_scoledit_htr_predictions.jsonl` et affiche
+le CER/WER moyens. Analyse dans `notebooks/05_analyse_transcription_htr.ipynb`.
 
 ### 4. Analyser les résultats
 
@@ -141,5 +173,6 @@ pytest                               # tester (29 tests)
 
 ## ⚠️ Données sensibles
 
-Les copies anonymes **ne sont jamais commitées**. Le dossier `/data/` est ignoré par Git
+Les copies sont des **écritures d'élèves mineurs**. Elles **ne quittent jamais le
+SSP Cloud** et **ne sont jamais commitées**. Le dossier `/data/` est ignoré par Git
 (voir [`.gitignore`](.gitignore)) ; seul le `.env.example` (sans secret) est versionné.
