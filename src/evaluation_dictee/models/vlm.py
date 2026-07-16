@@ -10,8 +10,10 @@ from __future__ import annotations
 import base64
 import io
 import json
+from typing import Any, cast
 
 from langfuse.openai import OpenAI
+from openai.types.chat import ChatCompletionMessageParam
 from PIL import Image
 
 from evaluation_dictee.config import ModelConfig, PromptConfig
@@ -19,7 +21,12 @@ from evaluation_dictee.data.loaders import Copy, load_image
 from evaluation_dictee.data.reference import GridItem
 from evaluation_dictee.models.base import CopyPrediction, ItemPrediction, Scorer
 from evaluation_dictee.pipeline.alignment import best_realignment, needs_realignment
-from evaluation_dictee.pipeline.prompts import build_dictation_prompt
+from evaluation_dictee.pipeline.prompts import (
+    PROMPT_DICTATION,
+    attach_image,
+    build_dictation_prompt,
+    fetch_prompt,
+)
 
 
 def _image_to_data_url(image: Image.Image) -> str:
@@ -73,21 +80,22 @@ class VLMScorer(Scorer):
         image = load_image(copy.image_path)
         # On code les items présents dans la copie, dans l'ordre de la grille.
         items_a_coder = [self._items_by_id[i] for i in copy.item_ids if i in self._items_by_id]
-        prompt = build_dictation_prompt(
-            reference_text=reference_text or "",
-            items=items_a_coder,
-            config=self.prompt_config,
-            scheme=self.scheme,
+        messages = cast(
+            "list[ChatCompletionMessageParam]",
+            attach_image(
+                build_dictation_prompt(
+                    reference_text=reference_text or "",
+                    items=items_a_coder,
+                    config=self.prompt_config,
+                    scheme=self.scheme,
+                ),
+                _image_to_data_url(image),
+            ),
         )
-        messages = [
-            {
-                "role": "user",
-                "content": [
-                    {"type": "text", "text": prompt},
-                    {"type": "image_url", "image_url": {"url": _image_to_data_url(image)}},
-                ],
-            }
-        ]
+        # Lie la génération à la version du prompt dans les traces Langfuse.
+        # No-op si Langfuse est hors ligne ou si le prompt vient du repli local.
+        prompt_ref = fetch_prompt(PROMPT_DICTATION)
+        trace_kwargs: dict[str, Any] = {"langfuse_prompt": prompt_ref} if prompt_ref else {}
 
         # Tentatives successives tant que la réponse n'est pas exploitable.
         # On augmente légèrement la température aux essais suivants pour sortir
@@ -109,6 +117,7 @@ class VLMScorer(Scorer):
                 max_tokens=self.model_config.max_tokens,
                 messages=messages,
                 extra_body=extra_body or None,
+                **trace_kwargs,
             )
             content = response.choices[0].message.content or "{}"
             prediction = self._parse_response(copy, content)

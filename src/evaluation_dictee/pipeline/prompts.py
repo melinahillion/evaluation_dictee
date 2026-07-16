@@ -29,7 +29,7 @@ from __future__ import annotations
 from typing import cast
 
 from langfuse import get_client
-from langfuse.model import ChatMessageDict
+from langfuse.model import ChatMessageDict, ChatPromptClient
 
 from evaluation_dictee.config import PromptConfig
 from evaluation_dictee.data.reference import GridItem
@@ -153,7 +153,8 @@ _TEMPLATE_DICTATION: list[ChatMessageDict] = [
             "Tu fais partie d'un groupe d'expert composé de professeurs et de formateurs pour une "
             "évaluation nationale de dictée.\n"
             "Ta tâche : On te montre l'image manuscrite de la dictée d'un élève de primaire. "
-            "Tu dois noter chaque item de la dictée à l'aide des éléments définis dans la grille de notation.\n\n"
+            "Tu dois noter chaque item de la dictée à l'aide des éléments définis "
+            "dans la grille de notation.\n\n"
             "Règles à respecter impérativement :\n"
             "1 - Tu dois noter chaque item de la dictée avec la grille de notation disponible : "
             "{{grille}}\n"
@@ -190,7 +191,8 @@ _TEMPLATE_TRANSCRIPTION: list[ChatMessageDict] = [
             "ne réordonne rien.\n "
             " 3 - Reproduis fidèlement les erreurs, y compris les "
             "accents manquants, les mots mal orthographiés et la ponctuation.\n"
-            "4 - Respecte l'ordre exact des items écrits sur la copie (mots, ponctuation, chiffres, ...).\n"
+            "4 - Respecte l'ordre exact des items écrits sur la copie "
+            "(mots, ponctuation, chiffres, ...).\n"
             "{{consigne_ratures}}"
         ),
     },
@@ -207,15 +209,17 @@ _TEMPLATE_TEXT_CODING: list[ChatMessageDict] = [
     {
         "role": "system",
         "content": (
-            "Tu fais partie d'un groupe d'expert, composé de professeur et de formateurs pour une évaluation nationale de dictée.\n"
-            "Ta tâche : Tu ne vois PAS l'image, on te donne uniquement la transcription de ce que l'élève "
-            "a écrit (produite par un système de lecture), et le texte de référence.\n"
+            "Tu fais partie d'un groupe d'expert, composé de professeur et de formateurs "
+            "pour une évaluation nationale de dictée.\n"
+            "Ta tâche : Tu ne vois PAS l'image, on te donne uniquement la transcription "
+            "de ce que l'élève a écrit (produite par un système de lecture), et le "
+            "texte de référence.\n"
             "Compare la transcription au mot attendu de chaque item. Si un mot attendu "
             "n'apparaît pas dans la transcription, code-le 0 (absent).\n\n"
             "Règles à respecter impérativement :\n"
-            "1 - Tu dois noter chaque item de la dictée avec la grille de notation disponible ci-dessous : "
+            "1 - Tu dois noter chaque item de la dictée avec la grille de notation "
+            "disponible ci-dessous : "
             "{{grille}}\n\n" + _CONSIGNE_ALIGNEMENT + "\n\n" + _CONSIGNE_COMPARAISON + "\n\n"
-            
         ),
     },
     {
@@ -270,14 +274,15 @@ def _compile_prompt(
     name: str,
     fallback: list[ChatMessageDict],
     variables: dict[str, object],
-) -> str:
-    """Récupère un prompt chat versionné dans Langfuse, le compile et l'aplatit.
+) -> list[ChatMessageDict]:
+    """Récupère un prompt chat versionné dans Langfuse et le compile.
 
     Le prompt est récupéré via son label de production. `fallback` est la structure
     locale (identique à celle poussée dans Langfuse) : elle sert de repli si le
     prompt n'existe pas encore ou si Langfuse est indisponible (tests, incident).
-    Le résultat est aplati en une seule chaîne car les appelants envoient le prompt
-    dans un unique bloc de texte, souvent accompagné de l'image.
+    On conserve la structure chat (message system + message user) : la séparation
+    des rôles est justement ce qu'on versionne dans Langfuse, et c'est le format
+    attendu par l'API (paramètre `messages`).
 
     Args:
         name: nom du prompt dans Langfuse.
@@ -285,7 +290,7 @@ def _compile_prompt(
         variables: valeurs à injecter dans les placeholders {{...}}.
 
     Returns:
-        Le prompt compilé, messages system + user concaténés.
+        Les messages chat compilés (rôle + contenu), system puis user.
     """
     try:
         prompt = get_client().get_prompt(name, type="chat", fallback=fallback)
@@ -293,9 +298,65 @@ def _compile_prompt(
     except Exception:  # pragma: no cover - repli défensif si Langfuse indisponible
         messages = _render_local(fallback, variables)
     # compile() peut renvoyer des placeholders de message (sans "content") ; nos
-    # prompts n'en contiennent pas, on aplatit donc simplement le champ texte.
+    # prompts n'en contiennent pas, on ne garde donc que les messages role/content.
     plain = cast("list[dict[str, object]]", messages)
-    return "\n\n".join(str(m["content"]) for m in plain if m.get("content"))
+    compiled: list[ChatMessageDict] = []
+    for message in plain:
+        if message.get("content"):
+            compiled.append({"role": str(message["role"]), "content": str(message["content"])})
+    return compiled
+
+
+def attach_image(messages: list[ChatMessageDict], image_data_url: str) -> list[dict[str, object]]:
+    """Attache une image au dernier message (user) d'une liste de messages chat.
+
+    Les fonctions build_* renvoient des messages à contenu texte simple. Pour un
+    appel multimodal, l'image doit être jointe au message user sous forme de contenu
+    structuré (bloc texte + bloc image), format attendu par l'API OpenAI/vLLM. Les
+    messages précédents (system) sont laissés intacts.
+
+    Args:
+        messages: messages chat (system + user) à contenu texte.
+        image_data_url: image encodée en data URL base64.
+
+    Returns:
+        Les messages, avec l'image ajoutée au dernier message user.
+    """
+    *head, user = messages
+    out: list[dict[str, object]] = [dict(message) for message in head]
+    out.append(
+        {
+            "role": user["role"],
+            "content": [
+                {"type": "text", "text": user["content"]},
+                {"type": "image_url", "image_url": {"url": image_data_url}},
+            ],
+        }
+    )
+    return out
+
+
+def fetch_prompt(name: str) -> ChatPromptClient | None:
+    """Renvoie l'objet prompt Langfuse pour `name`, ou None si indisponible.
+
+    Sert à lier une génération à la VERSION du prompt dans les traces Langfuse
+    (paramètre `langfuse_prompt` du client `langfuse.openai`). On renvoie None si
+    Langfuse est injoignable OU si le prompt est servi depuis le repli local
+    (`is_fallback`) : il n'y a alors pas de version distante à référencer, et lier
+    une trace à un repli fausserait l'analyse. La récupération est mise en cache
+    côté client par Langfuse : l'appel reste bon marché même répété par copie.
+
+    Args:
+        name: nom du prompt versionné (une clé de PROMPT_TEMPLATES).
+
+    Returns:
+        L'objet prompt chat, ou None si aucun lien fiable n'est possible.
+    """
+    try:
+        prompt = get_client().get_prompt(name, type="chat", fallback=PROMPT_TEMPLATES[name])
+    except Exception:  # pragma: no cover - repli défensif si Langfuse indisponible
+        return None
+    return None if prompt.is_fallback else prompt
 
 
 def build_dictation_prompt(
@@ -303,12 +364,12 @@ def build_dictation_prompt(
     items: list[GridItem],
     config: PromptConfig,
     scheme: str = "simplifiee",
-) -> str:
+) -> list[ChatMessageDict]:
     """Construit le prompt d'évaluation d'une dictée (méthode C, end-to-end).
 
-    Charge le template versionné « dictee_methode_c » depuis Langfuse et le remplit
-    selon les inputs : les blocs conditionnels (fidélité, ratures, chain-of-thought)
-    et le schéma de codage déterminent la valeur injectée dans chaque variable.
+    Charge le template versionné « Dictation » depuis Langfuse et le remplit selon
+    les inputs : les blocs conditionnels (fidélité, ratures, chain-of-thought) et le
+    schéma de codage déterminent la valeur injectée dans chaque variable.
 
     Args:
         reference_text: texte exact de la dictée attendue.
@@ -319,7 +380,8 @@ def build_dictation_prompt(
             code dans le MÊME jeu de modalités que les experts après normalisation.
 
     Returns:
-        Le prompt complet à envoyer au modèle.
+        Les messages chat (system + user) à envoyer au modèle. L'image est ajoutée
+        au message user par l'appelant via `attach_image`.
     """
     grille = _GRILLE_COMPLETE if scheme == "complete" else _GRILLE_SIMPLIFIEE
 
@@ -360,11 +422,11 @@ def build_dictation_prompt(
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-def build_transcription_prompt(read_final_state: bool = True) -> str:
+def build_transcription_prompt(read_final_state: bool = True) -> list[ChatMessageDict]:
     """Prompt de l'ÉTAPE 1 (HTR) : transcrire fidèlement l'image, sans coder.
 
-    Charge le template versionné « dictee_transcription » depuis Langfuse. Le modèle
-    ne reçoit PAS le texte de référence : on veut une lecture brute, non biaisée par
+    Charge le template versionné « Transcription » depuis Langfuse. Le modèle ne
+    reçoit PAS le texte de référence : on veut une lecture brute, non biaisée par
     ce qui était attendu. Il restitue exactement ce que l'élève a écrit, fautes
     comprises.
 
@@ -372,7 +434,8 @@ def build_transcription_prompt(read_final_state: bool = True) -> str:
         read_final_state: si True, consigne de lire l'état final en cas de rature.
 
     Returns:
-        Le prompt de transcription.
+        Les messages chat (system + user). L'image est ajoutée au message user par
+        l'appelant via `attach_image`.
     """
     consigne_ratures = ("\n" + _CONSIGNE_RATURES_TRANSCRIPTION) if read_final_state else ""
     return _compile_prompt(
@@ -387,12 +450,13 @@ def build_text_coding_prompt(
     transcription: str,
     items: list[GridItem],
     scheme: str = "simplifiee",
-) -> str:
+) -> list[ChatMessageDict]:
     """Prompt de l'ÉTAPE 2 : coder à partir du TEXTE transcrit (sans image).
 
-    Charge le template versionné « dictee_codage_texte » depuis Langfuse. Cette étape
-    ne prend que du texte en entrée : la transcription produite à l'étape 1 et le
-    texte de référence. Elle peut donc être confiée à un modèle purement textuel.
+    Charge le template versionné « Text coding » depuis Langfuse. Cette étape ne
+    prend que du texte en entrée : la transcription produite à l'étape 1 et le
+    texte de référence. Elle peut donc être confiée à un modèle purement textuel,
+    et les messages sont envoyés tels quels (pas d'image à joindre).
 
     Args:
         reference_text: texte de référence de la dictée.
@@ -401,7 +465,7 @@ def build_text_coding_prompt(
         scheme: "simplifiee" ou "complete".
 
     Returns:
-        Le prompt de codage textuel.
+        Les messages chat (system + user) à envoyer au modèle.
     """
     grille = _GRILLE_COMPLETE if scheme == "complete" else _GRILLE_SIMPLIFIEE
     return _compile_prompt(

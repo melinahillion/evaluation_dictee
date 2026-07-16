@@ -15,15 +15,17 @@ import io
 import json
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import cast
 
 import pandas as pd
 from openai import OpenAI
+from openai.types.chat import ChatCompletionMessageParam
 from PIL import Image
 from tqdm import tqdm
 
 from evaluation_dictee.config import ModelConfig
 from evaluation_dictee.data.loaders import load_image
-from evaluation_dictee.pipeline.prompts import build_transcription_prompt
+from evaluation_dictee.pipeline.prompts import attach_image, build_transcription_prompt
 from evaluation_dictee.transcription.htr_metrics import (
     TranscriptionMetrics,
     compute_transcription_metrics,
@@ -62,7 +64,9 @@ class VLMTranscriber:
         """
         self.model_config = model_config
         self.client = OpenAI(base_url=base_url, api_key=api_key)
-        self.prompt = build_transcription_prompt(read_final_state=read_final_state)
+        # Messages (system + user) du prompt de transcription ; l'image est jointe
+        # au message user à chaque appel via attach_image.
+        self.prompt_messages = build_transcription_prompt(read_final_state=read_final_state)
 
     def transcribe(self, image_path: str) -> str:
         """Transcrit une image manuscrite en texte brut (fautes préservées).
@@ -74,15 +78,10 @@ class VLMTranscriber:
             La transcription produite par le modèle (chaîne vide si échec).
         """
         image = load_image(image_path)
-        messages = [
-            {
-                "role": "user",
-                "content": [
-                    {"type": "text", "text": self.prompt},
-                    {"type": "image_url", "image_url": {"url": _image_to_data_url(image)}},
-                ],
-            }
-        ]
+        messages = cast(
+            "list[ChatCompletionMessageParam]",
+            attach_image(self.prompt_messages, _image_to_data_url(image)),
+        )
         for attempt in range(self.model_config.max_retries + 1):
             temp = self.model_config.temperature + (0.3 if attempt > 0 else 0.0)
             response = self.client.chat.completions.create(

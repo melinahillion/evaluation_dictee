@@ -22,8 +22,10 @@ from __future__ import annotations
 
 import json
 import re
+from typing import cast
 
 from openai import OpenAI
+from openai.types.chat import ChatCompletionMessageParam
 
 from evaluation_dictee.config import ModelConfig, PromptConfig
 from evaluation_dictee.data.loaders import Copy, load_image
@@ -32,6 +34,7 @@ from evaluation_dictee.models.base import CopyPrediction, ItemPrediction, Scorer
 from evaluation_dictee.models.vlm import _image_to_data_url
 from evaluation_dictee.pipeline.alignment import best_realignment, needs_realignment
 from evaluation_dictee.pipeline.prompts import (
+    attach_image,
     build_text_coding_prompt,
     build_transcription_prompt,
 )
@@ -151,16 +154,13 @@ class TwoStageScorer(Scorer):
             (transcription, n_attempts). Transcription vide si échec total.
         """
         image = load_image(copy.image_path)
-        prompt = build_transcription_prompt(read_final_state=self.prompt_config.read_final_state)
-        messages = [
-            {
-                "role": "user",
-                "content": [
-                    {"type": "text", "text": prompt},
-                    {"type": "image_url", "image_url": {"url": _image_to_data_url(image)}},
-                ],
-            }
-        ]
+        messages = cast(
+            "list[ChatCompletionMessageParam]",
+            attach_image(
+                build_transcription_prompt(read_final_state=self.prompt_config.read_final_state),
+                _image_to_data_url(image),
+            ),
+        )
         for attempt in range(self.model_config.max_retries + 1):
             temp = self.model_config.temperature + (0.3 if attempt > 0 else 0.0)
             response = self.client.chat.completions.create(
@@ -196,11 +196,14 @@ class TwoStageScorer(Scorer):
         parasite, troncature) codait toute la copie en '?' silencieusement.
         """
         items_a_coder = [self._items_by_id[i] for i in copy.item_ids if i in self._items_by_id]
-        prompt = build_text_coding_prompt(
-            reference_text=reference_text,
-            transcription=transcription,
-            items=items_a_coder,
-            scheme=self.scheme,
+        messages = cast(
+            "list[ChatCompletionMessageParam]",
+            build_text_coding_prompt(
+                reference_text=reference_text,
+                transcription=transcription,
+                items=items_a_coder,
+                scheme=self.scheme,
+            ),
         )
         for attempt in range(self.model_config_stage2.max_retries + 1):
             temp = self.model_config_stage2.temperature + (0.3 if attempt > 0 else 0.0)
@@ -208,7 +211,7 @@ class TwoStageScorer(Scorer):
                 model=self.model_config_stage2.name,
                 temperature=temp,
                 max_tokens=self.model_config_stage2.max_tokens,
-                messages=[{"role": "user", "content": prompt}],
+                messages=messages,
             )
             content = response.choices[0].message.content or ""
             # On regarde d'abord si le JSON est extractible avant de le parser.
