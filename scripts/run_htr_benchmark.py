@@ -1,7 +1,7 @@
 """Point d'entrée : évaluer la transcription (HTR) d'un modèle sur Scoledit.
 
 Usage :
-    python scripts/run_htr_benchmark.py --config configs/htr_gemma4_scoledit.yaml
+    python scripts/run_htr_benchmark.py --config configs/htr/htr_REFERENCE.yaml
 """
 
 from __future__ import annotations

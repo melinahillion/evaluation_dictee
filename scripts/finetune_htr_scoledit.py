@@ -16,7 +16,7 @@ Prérequis (à installer sur le service GPU Onyxia) :
                 datasets pillow s3fs pyyaml pydantic mlflow
 
 Usage :
-    python scripts/finetune_htr_scoledit.py --config configs/finetune_htr_gemma4.yaml
+    python scripts/finetune_htr_scoledit.py --config configs/finetune/finetune_REFERENCE.yaml
 
 Ce script s'exécute sur une H100/A100 80 Go du SSP Cloud. Ne pas lancer sans GPU.
 """

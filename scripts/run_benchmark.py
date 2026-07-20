@@ -5,7 +5,7 @@ construit le modèle, lance le benchmark et affiche les métriques. Suivre le fi
 de `run_benchmark` (dans src/.../pipeline/benchmark.py) pour comprendre le projet.
 
 Usage :
-    python scripts/run_benchmark.py --config configs/dictee_qwen7b_zeroshot.yaml
+    python scripts/run_benchmark.py --config configs/scoring/dictee_REFERENCE.yaml
 """
 
 from __future__ import annotations
@@ -46,13 +46,15 @@ def main() -> None:
         with experiment_run(config):
             result = run_benchmark(config, scorer)
             log_metrics(
+                config,
                 {
                     "raw_agreement": result.metrics.raw_agreement,
                     "cohen_kappa": result.metrics.cohen_kappa,
-                }
+                    "n_items": result.metrics.n_items,
+                },
             )
     finally:
-        # Langfose envoie les traces de façon asynchrone : sans flush explicite,
+        # Langfuse envoie les traces de façon asynchrone : sans flush explicite,
         # le script peut se terminer avant l'envoi et perdre les dernières traces.
         get_client().flush()
 
