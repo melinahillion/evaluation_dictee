@@ -122,15 +122,17 @@ _CONSIGNE_COT = (
 
 # Format de sortie JSON de la méthode C, avec ou sans champ « comparaison » (CoT).
 _FORMAT_ITEMS_COT = (
-    "Réponds UNIQUEMENT par un objet JSON, sans texte autour, de la forme :\n"
+    "Réponds UNIQUEMENT par un objet JSON, sans texte autour ni de notes, de la forme :\n"
     '{"items": [{"item_id": "...", "transcription": "ce que l\'élève a écrit", '
     '"comparaison": "identique" OU description brève de la différence, '
-    '"code": "1", "confidence": 0.95}, ...]}'
+    '"code": "1", "confidence": 0.95}, ...]}.\n'
+    'Tout ajout de texte hors de la structure du JSON sera pris comme une erreur par le pipeline.'
 )
 _FORMAT_ITEMS_SIMPLE = (
-    "Réponds UNIQUEMENT par un objet JSON, sans texte autour, de la forme :\n"
+    "Réponds UNIQUEMENT par un objet JSON, sans texte autour ni de notes, de la forme :\n"
     '{"items": [{"item_id": "...", "transcription": "ce que l\'élève a écrit", '
-    '"code": "1", "confidence": 0.95}, ...]}\n'
+    '"code": "1", "confidence": 0.95}, ...]}.\n'
+    'Tout ajout de texte hors de la structure du JSON sera pris comme une erreur par le pipeline.'
 )
 
 # Consigne « ratures » propre à l'étape de transcription (formulation dédiée).

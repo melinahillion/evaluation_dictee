@@ -37,6 +37,41 @@ def _image_to_data_url(image: Image.Image) -> str:
     return f"data:image/png;base64,{encoded}"
 
 
+def _items_json_schema(chain_of_thought: bool) -> dict[str, Any]:
+    """Schéma JSON de la réponse attendue (méthode C), pour le décodage contraint.
+
+    Contraint la STRUCTURE de chaque item, pas leur nombre : celui-ci varie d'une
+    copie à l'autre et n'est pas connu à l'avance. Le champ « comparaison » n'est
+    exigé qu'en mode chain-of-thought (aligné sur le prompt).
+
+    Args:
+        chain_of_thought: si True, ajoute le champ « comparaison » au schéma.
+
+    Returns:
+        Un schéma JSON exploitable par `response_format` (json_schema) de vLLM.
+    """
+    properties: dict[str, Any] = {
+        "item_id": {"type": "string"},
+        "transcription": {"type": "string"},
+        "code": {"type": "string"},
+        "confidence": {"type": "number"},
+    }
+    required = ["item_id", "transcription", "code", "confidence"]
+    if chain_of_thought:
+        properties["comparaison"] = {"type": "string"}
+        required.append("comparaison")
+    return {
+        "type": "object",
+        "properties": {
+            "items": {
+                "type": "array",
+                "items": {"type": "object", "properties": properties, "required": required},
+            }
+        },
+        "required": ["items"],
+    }
+
+
 class VLMScorer(Scorer):
     """Évalue une copie via un VLM (méthode C end-to-end)."""
 
@@ -97,6 +132,18 @@ class VLMScorer(Scorer):
         prompt_ref = fetch_prompt(PROMPT_DICTATION)
         trace_kwargs: dict[str, Any] = {"langfuse_prompt": prompt_ref} if prompt_ref else {}
 
+        # Décodage contraint : le modèle est FORCÉ de produire un JSON conforme au
+        # schéma (aucun texte hors JSON), ce qui garantit une réponse parsable.
+        response_format_kwargs: dict[str, Any] = {}
+        if self.model_config.structured_output:
+            response_format_kwargs["response_format"] = {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "codage_dictee",
+                    "schema": _items_json_schema(self.prompt_config.chain_of_thought),
+                },
+            }
+
         # Tentatives successives tant que la réponse n'est pas exploitable.
         # On augmente légèrement la température aux essais suivants pour sortir
         # d'une éventuelle réponse vide déterministe.
@@ -117,6 +164,7 @@ class VLMScorer(Scorer):
                 max_tokens=self.model_config.max_tokens,
                 messages=messages,
                 extra_body=extra_body or None,
+                **response_format_kwargs,
                 **trace_kwargs,
             )
             content = response.choices[0].message.content or "{}"

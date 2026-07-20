@@ -30,8 +30,6 @@ class Secrets(BaseSettings):
     llm_base_url: str = "https://llm.lab.sspcloud.fr/api/v1"
     llm_api_key: str = "dummy"
 
-    mlflow_tracking_uri: str = ""
-
 
 class ModelConfig(BaseModel):
     """Paramètres du modèle à interroger."""
@@ -55,6 +53,12 @@ class ModelConfig(BaseModel):
     # QwQ, DeepSeek-R1, etc.
     # Sans effet sur les modèles classiques (gemma4, Qwen2.5-VL, ...).
     disable_thinking: bool = True
+    # Forcer une sortie JSON conforme au schéma via le décodage contraint de vLLM
+    # (response_format json_schema). Le modèle ne peut alors PAS produire de texte
+    # hors JSON (commentaire, note), ce qui supprime les copies « non transcrites »
+    # dues à un parsing impossible. Mettre à False si l'endpoint/modèle ne supporte
+    # pas json_schema (le décodage retombe alors sur un prompt non contraint).
+    structured_output: bool = True
 
 
 class DataConfig(BaseModel):
@@ -100,7 +104,7 @@ class PromptConfig(BaseModel):
 class ExperimentConfig(BaseModel):
     """Configuration complète d'une expérience (un fichier YAML = un run)."""
 
-    name: str = Field(..., description="Nom unique du run, utilisé dans MLflow")
+    name: str = Field(..., description="Nom unique du run, utilisé comme nom de trace Langfuse")
     seed: int = 42
     # Approche d'évaluation :
     # - "end_to_end" (approche 2) : un VLM lit l'image ET code en une passe.

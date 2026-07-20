@@ -25,6 +25,7 @@ from evaluation_dictee.data.reference import load_grid
 from evaluation_dictee.evaluation.metrics import ScoringMetrics, compute_scoring_metrics
 from evaluation_dictee.models.base import Scorer
 from evaluation_dictee.utils.logging import get_logger
+from evaluation_dictee.utils.tracking import copy_trace
 
 logger = get_logger(__name__)
 
@@ -161,52 +162,76 @@ def run_benchmark(
     # Ouverture en mode APPEND : les copies précédemment traitées sont conservées.
     with open(out_path, "a", encoding="utf-8") as f_pred:
         for copy in tqdm(copies_a_traiter, desc=f"Évaluation ({config.name})"):
-            # Chaque copie est isolée dans un try/except : une erreur API sur
-            # UNE copie ne fait plus perdre les précédentes.
-            try:
-                prediction = scorer.score_copy(copy, reference)
-            except Exception as exc:  # noqa: BLE001 — on veut TOUT rattraper ici
-                logger.error(
-                    "Échec sur la copie %s : %s. On passe à la suivante.",
-                    copy.copy_id,
-                    exc,
-                )
-                failed_copies.append((copy.copy_id, str(exc)))
-                continue
+            # Une trace Langfuse par copie : les appels LLM du scorer s'y
+            # imbriquent, et on y rattache l'issue (sortie, score, statut).
+            # No-op transparent si Langfuse est indisponible (trace vaut None).
+            with copy_trace(copy) as trace:
+                # Chaque copie est isolée dans un try/except : une erreur API sur
+                # UNE copie ne fait plus perdre les précédentes.
+                try:
+                    prediction = scorer.score_copy(copy, reference)
+                except Exception as exc:  # noqa: BLE001 — on veut TOUT rattraper ici
+                    logger.error(
+                        "Échec sur la copie %s : %s. On passe à la suivante.",
+                        copy.copy_id,
+                        exc,
+                    )
+                    failed_copies.append((copy.copy_id, str(exc)))
+                    if trace is not None:
+                        trace.update(level="ERROR", status_message=str(exc))
+                    continue
 
-            if not prediction.transcribed:
-                non_transcrites.append(copy.copy_id)
-                logger.warning(
-                    "Copie non transcrite après %d tentative(s) : %s (exclue des métriques).",
-                    prediction.n_attempts,
-                    copy.copy_id,
-                )
-                continue
+                if not prediction.transcribed:
+                    non_transcrites.append(copy.copy_id)
+                    logger.warning(
+                        "Copie non transcrite après %d tentative(s) : %s (exclue des métriques).",
+                        prediction.n_attempts,
+                        copy.copy_id,
+                    )
+                    if trace is not None:
+                        trace.update(
+                            level="WARNING",
+                            status_message="copie non transcrite",
+                            output={"transcribed": False, "n_attempts": prediction.n_attempts},
+                        )
+                    continue
 
-            pred_by_id = {it.item_id: it for it in prediction.items}
+                pred_by_id = {it.item_id: it for it in prediction.items}
 
-            # Écriture incrémentale de chaque item de la copie
-            for item_id, expert_code in zip(copy.item_ids, copy.expert_codes, strict=True):
-                pred = pred_by_id.get(item_id)
-                true_code = grid.normalize(expert_code, scheme)
-                pred_code = grid.normalize(pred.code, scheme) if pred else "?"
-                conf = pred.confidence if pred else 0.0
-                record = {
-                    "copy_id": copy.copy_id,
-                    "item_id": item_id,
-                    "y_true": true_code,
-                    "y_pred": pred_code,
-                    "confidence": conf,
-                    "transcription": pred.transcription if pred else None,
-                    "comparaison": pred.comparaison if pred else None,
-                    "raw_transcription": prediction.raw_transcription,
-                }
-                f_pred.write(json.dumps(record, ensure_ascii=False) + "\n")
+                # Écriture incrémentale de chaque item + comptage de l'accord copie.
+                n_items_copie = 0
+                n_accord = 0
+                for item_id, expert_code in zip(copy.item_ids, copy.expert_codes, strict=True):
+                    pred = pred_by_id.get(item_id)
+                    true_code = grid.normalize(expert_code, scheme)
+                    pred_code = grid.normalize(pred.code, scheme) if pred else "?"
+                    conf = pred.confidence if pred else 0.0
+                    record = {
+                        "copy_id": copy.copy_id,
+                        "item_id": item_id,
+                        "y_true": true_code,
+                        "y_pred": pred_code,
+                        "confidence": conf,
+                        "transcription": pred.transcription if pred else None,
+                        "comparaison": pred.comparaison if pred else None,
+                        "raw_transcription": prediction.raw_transcription,
+                    }
+                    f_pred.write(json.dumps(record, ensure_ascii=False) + "\n")
+                    n_items_copie += 1
+                    if pred_code == true_code:
+                        n_accord += 1
 
-            # Flush + fsync : les données sont sur le disque. Un crash après ce
-            # point ne peut plus perdre la copie qu'on vient d'écrire.
-            f_pred.flush()
-            os.fsync(f_pred.fileno())
+                # Flush + fsync : les données sont sur le disque. Un crash après ce
+                # point ne peut plus perdre la copie qu'on vient d'écrire.
+                f_pred.flush()
+                os.fsync(f_pred.fileno())
+
+                # Sortie + score d'accord au niveau de la copie (onglet Scores).
+                if trace is not None and n_items_copie:
+                    accord_copie = n_accord / n_items_copie
+                    trace.update(output={"n_items": n_items_copie, "raw_agreement": accord_copie})
+                    # data_type inféré NUMERIC (valeur flottante) — voir doc Langfuse Scores.
+                    trace.score_trace(name="raw_agreement", value=accord_copie)
 
     # Sauvegarde de la liste des échecs (utile pour relancer sélectivement)
     if failed_copies:

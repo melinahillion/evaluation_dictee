@@ -30,11 +30,11 @@ Le projet implémente **deux architectures** derrière la même interface `Score
 donc évaluées par le même code de métriques (comparaison rigoureuse) :
 
 - **`end_to_end` (approche 2)** : un VLM lit l'image ET code en une seule passe.
-  Approche par défaut. Config : `configs/dictee_gemma4_zeroshot.yaml`.
+  Approche par défaut. Config : `configs/scoring/dictee_REFERENCE.yaml`.
 - **`two_stage` (approche 1)** : étape 1 = transcription HTR (lecture de l'image en
   texte brut, fautes comprises) ; étape 2 = codage du texte transcrit (sans image,
   éventuellement par un modèle texte plus léger via `model_stage2`). Isole lecture
-  et jugement. Config : `configs/dictee_gemma4_2stages.yaml`. L'approche se choisit
+  et jugement. Config : `configs/scoring/dictee_REFERENCE.yaml`. L'approche se choisit
   via le champ `approach` du YAML.
 
 ### Évaluation dédiée de la transcription (HTR) sur Scoledit
@@ -43,7 +43,7 @@ Indépendamment du codage, on peut mesurer la **fidélité de lecture** d'un mod
 l'écriture manuscrite d'enfants via le corpus **Scoledit** (transcriptions de
 référence humaines, fautes préservées). Métriques CER/WER (bruts et normalisés).
 Cela permet de comparer les modèles sur la seule lecture et de distinguer les
-erreurs de lecture de celles de jugement. Config : `configs/htr_gemma4_scoledit.yaml`,
+erreurs de lecture de celles de jugement. Config : `configs/htr/htr_REFERENCE.yaml`,
 script : `scripts/run_htr_benchmark.py`, analyse :
 `notebooks/05_analyse_transcription_htr.ipynb`.
 
@@ -93,11 +93,13 @@ messages=[{'role':'user','content':'Dis bonjour'}], max_tokens=10).choices[0].me
 
 **Commande de base** (test rapide, terminal foreground) :
 ```bash
-uv run scripts/run_benchmark.py --config configs/dictee_gemma4_zeroshot.yaml
+uv run scripts/run_benchmark.py --config configs/scoring/dictee_REFERENCE.yaml
 ```
 
-Cela produit `data/processed/dictee_gemma4_zeroshot_predictions.jsonl`
-(une ligne par item × copie) et journalise les métriques dans MLflow.
+Cela produit `data/processed/dictee_REFERENCE_predictions.jsonl`
+(une ligne par item × copie) et journalise tout dans Langfuse : une **session**
+par run, une **trace** par copie (entrée/sortie + score d'accord), les appels LLM
+en générations imbriquées, et les métriques agrégées du run en Scores et metadata.
 
 **Pour un run complet (long)**, utiliser une session détachable — voir la section
 « Runs longs (screen / nohup) » plus bas dans ce README.
@@ -110,15 +112,15 @@ et il saute les copies déjà traitées. Voir « Runs longs » pour les détails
 **Pour l'évaluation de la transcription (HTR)** sur Scoledit :
 
 ```bash
-python scripts/run_htr_benchmark.py --config configs/htr_gemma4_scoledit.yaml
+python scripts/run_htr_benchmark.py --config configs/htr/htr_REFERENCE.yaml
 ```
 
-Cela produit `data/processed/htr_gemma4_scoledit_htr_predictions.jsonl` et affiche
+Cela produit `data/processed/htr_REFERENCE_htr_predictions.jsonl` et affiche
 le CER/WER moyens. Analyse dans `notebooks/05_analyse_transcription_htr.ipynb`.
 
 **Pour le fine-tuning** d'un modèle de transcription (nécessite un GPU H100) :
 ```bash
-python scripts/finetune_htr_scoledit.py --config configs/finetune_htr_gemma4.yaml
+python scripts/finetune_htr_scoledit.py --config configs/finetune/finetune_REFERENCE.yaml
 ```
 Voir la documentation détaillée dans le script pour les prérequis d'installation
 (`unsloth`, `trl`, `bitsandbytes`).
@@ -169,7 +171,7 @@ which screen && echo "OK" || echo "absent"
 
 # Créer une session détachable et lancer le run :
 screen -S dictee
-python scripts/run_benchmark.py --config configs/dictee_gemma4_cot.yaml
+python scripts/run_benchmark.py --config configs/scoring/dictee_REFERENCE.yaml
 
 # Détacher :         Ctrl+A  puis  D    (le job continue en arrière-plan)
 # Rattacher :        screen -r dictee
@@ -182,18 +184,18 @@ python scripts/run_benchmark.py --config configs/dictee_gemma4_cot.yaml
 ```bash
 mkdir -p logs    # créer le dossier si pas encore fait
 
-nohup python scripts/run_benchmark.py --config configs/dictee_gemma4_cot.yaml \
-      > logs/dictee_gemma4_cot.log 2>&1 &
-echo $! > logs/dictee_gemma4_cot.pid    # noter le PID pour arrêter plus tard
+nohup python scripts/run_benchmark.py --config configs/scoring/dictee_REFERENCE.yaml \
+      > logs/dictee_REFERENCE.log 2>&1 &
+echo $! > logs/dictee_REFERENCE.pid    # noter le PID pour arrêter plus tard
 
 # Suivre le log en direct :
-tail -f logs/dictee_gemma4_cot.log
+tail -f logs/dictee_REFERENCE.log
 
 # Vérifier que le process tourne :
-ps -p $(cat logs/dictee_gemma4_cot.pid)
+ps -p $(cat logs/dictee_REFERENCE.pid)
 
 # Arrêter proprement (le checkpointing sauvegardera l'état) :
-kill $(cat logs/dictee_gemma4_cot.pid)
+kill $(cat logs/dictee_REFERENCE.pid)
 ```
 
 ### Surveillance de l'avancement
@@ -203,13 +205,13 @@ un signal de vie plus fiable que la barre de progression :
 
 ```bash
 # Compter les copies déjà traitées dans le JSONL (une copie = ~83 lignes) :
-wc -l data/processed/dictee_gemma4_cot_predictions.jsonl
+wc -l data/processed/dictee_REFERENCE_predictions.jsonl
 
 # Suivre le compteur en direct (mise à jour toutes les 5 s) :
-watch -n 5 "wc -l data/processed/dictee_gemma4_cot_predictions.jsonl"
+watch -n 5 "wc -l data/processed/dictee_REFERENCE_predictions.jsonl"
 
 # Lister les copies en échec (à retenter au prochain lancement) :
-cat data/processed/dictee_gemma4_cot_failed_copies.txt
+cat data/processed/dictee_REFERENCE_failed_copies.txt
 ```
 
 ### Reprise après crash — mode d'emploi
@@ -230,8 +232,10 @@ Conséquences pratiques :
 
 ## Configurer une expérience
 
-Un fichier YAML dans `configs/` = une expérience reproductible. Exemple commenté :
-[`configs/dictee_gemma4_zeroshot.yaml`](configs/dictee_gemma4_zeroshot.yaml).
+Un fichier YAML dans `configs/` = une expérience reproductible. Les configs sont
+rangées par famille (`scoring/`, `htr/`, `finetune/`) et documentées dans
+[`configs/README.md`](configs/README.md). Modèle exhaustivement commenté à copier :
+[`configs/scoring/dictee_REFERENCE.yaml`](configs/scoring/dictee_REFERENCE.yaml).
 
 | Champ | Rôle |
 |-------|------|
@@ -253,13 +257,12 @@ evaluation_dictee/
 ├── CLAUDE.md                  ← contexte du projet pour humains et IA
 ├── README.md                  ← ce fichier
 ├── pyproject.toml             ← dépendances + config ruff/mypy/pytest
-├── configs/
+├── configs/                      ← configs de référence, une par famille (voir configs/README.md)
+│   ├── README.md                 ← guide de paramétrage (toutes les familles)
 │   ├── grille_dictee_2015.json   ← grille de codage (mot attendu + fautes connues)
-│   ├── dictee_gemma4_zeroshot.yaml   ← approche end-to-end (1 étape)
-│   ├── dictee_gemma4_2stages.yaml    ← approche 2 étapes (HTR + codage texte)
-│   ├── dictee_gemma4_cot.yaml        ← 1 étape avec chain-of-thought
-│   ├── htr_gemma4_scoledit.yaml      ← évaluation HTR sur corpus Scoledit
-│   └── finetune_htr_gemma4.yaml      ← fine-tuning HTR (QLoRA)
+│   ├── scoring/dictee_REFERENCE.yaml      ← codage dictée (run_benchmark.py)
+│   ├── htr/htr_REFERENCE.yaml             ← évaluation HTR Scoledit (run_htr_benchmark.py)
+│   └── finetune/finetune_REFERENCE.yaml   ← fine-tuning HTR QLoRA (finetune_htr_scoledit.py)
 ├── src/evaluation_dictee/
 │   ├── config.py              ← configs validées (Pydantic) + secrets (.env)
 │   ├── data/                  ← chargement images (S3, TIFF 1 bit) + grille + labels
@@ -283,7 +286,7 @@ evaluation_dictee/
 │   │   ├── htr_metrics.py     ← CER, WER (bruts et normalisés)
 │   │   ├── htr_benchmark.py   ← run HTR + agrégation métriques
 │   │   └── visual_diff.py     ← HTML des pires / N aléatoires
-│   └── utils/                 ← logging, suivi MLflow
+│   └── utils/                 ← logging, suivi Langfuse (traces, prompts, scores)
 ├── scripts/
 │   ├── run_benchmark.py       ← point d'entrée CLI (approches 1 et 2 étapes)
 │   ├── run_htr_benchmark.py   ← point d'entrée CLI pour l'évaluation HTR
@@ -329,16 +332,17 @@ python -c "from evaluation_dictee.data.loaders import load_labels; \
     print(len(load_labels('s3://projet-production-ecrits-depp/resultat_dictee_2015.csv')), 'copies')"
 pytest -q                                        # lancer les tests
 
-# ─────────── Benchmarks : approches 1 et 2 étapes ───────────
-python scripts/run_benchmark.py --config configs/dictee_gemma4_zeroshot.yaml
-python scripts/run_benchmark.py --config configs/dictee_gemma4_2stages.yaml
-python scripts/run_benchmark.py --config configs/dictee_gemma4_cot.yaml   # chain-of-thought
+# ─────────── Benchmark scoring dictée ───────────
+# Config de référence prête à l'emploi (approche end_to_end). Pour comparer une
+# autre approche/variante (two_stage, chain-of-thought, autre modèle), copier la
+# référence et ajuster (voir configs/README.md).
+python scripts/run_benchmark.py --config configs/scoring/dictee_REFERENCE.yaml
 
 # ─────────── Évaluation de la transcription HTR (Scoledit) ───────────
-python scripts/run_htr_benchmark.py --config configs/htr_gemma4_scoledit.yaml
+python scripts/run_htr_benchmark.py --config configs/htr/htr_REFERENCE.yaml
 
 # ─────────── Fine-tuning HTR (GPU H100 requis) ───────────
-python scripts/finetune_htr_scoledit.py --config configs/finetune_htr_gemma4.yaml
+python scripts/finetune_htr_scoledit.py --config configs/finetune/finetune_REFERENCE.yaml
 
 # ─────────── Runs longs (session détachable) ───────────
 mkdir -p logs                                    # toujours créer d'abord
@@ -348,12 +352,12 @@ which screen && screen -S dictee                 # puis Ctrl+A D pour détacher
                                                  # screen -r dictee pour rattacher
 
 # Option B : nohup (toujours dispo, sans interface interactive)
-nohup python scripts/run_benchmark.py --config configs/dictee_gemma4_cot.yaml \
-      > logs/dictee_gemma4_cot.log 2>&1 &
+nohup python scripts/run_benchmark.py --config configs/scoring/dictee_REFERENCE.yaml \
+      > logs/dictee_REFERENCE.log 2>&1 &
 
 # ─────────── Surveillance d'un run en cours ───────────
-tail -f logs/dictee_gemma4_cot.log
-watch -n 5 "wc -l data/processed/dictee_gemma4_cot_predictions.jsonl"
+tail -f logs/dictee_REFERENCE.log
+watch -n 5 "wc -l data/processed/dictee_REFERENCE_predictions.jsonl"
 
 # ─────────── Analyse des résultats ───────────
 jupyter lab notebooks/03_analyse_resultats.ipynb   # analyse statistique + export DEPP

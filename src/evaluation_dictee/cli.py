@@ -1,17 +1,19 @@
 """Interface en ligne de commande du projet.
 
 Exposée via la commande `eval-ecrit` (voir pyproject.toml [project.scripts]).
-Exemple : `eval-ecrit benchmark configs/dictee_qwen7b_zeroshot.yaml`
+Exemple : `eval-ecrit benchmark configs/scoring/dictee_REFERENCE.yaml`
 """
 
 from __future__ import annotations
 
 import typer
+from langfuse import get_client
 from rich.console import Console
 from rich.table import Table
 
 from evaluation_dictee.config import Secrets, load_config
 from evaluation_dictee.data.reference import load_grid
+from evaluation_dictee.evaluation.metrics import ScoringMetrics
 from evaluation_dictee.models.factory import build_scorer
 from evaluation_dictee.pipeline.benchmark import run_benchmark
 from evaluation_dictee.utils.tracking import experiment_run, log_metrics
@@ -40,20 +42,26 @@ def benchmark(config_path: str) -> None:
         api_key=secrets.llm_api_key,
     )
 
-    with experiment_run(config):
-        result = run_benchmark(config, scorer)
-        log_metrics(
-            {
-                "raw_agreement": result.metrics.raw_agreement,
-                "cohen_kappa": result.metrics.cohen_kappa,
-                "n_items": result.metrics.n_items,
-            }
-        )
+    try:
+        with experiment_run(config):
+            result = run_benchmark(config, scorer)
+            log_metrics(
+                config,
+                {
+                    "raw_agreement": result.metrics.raw_agreement,
+                    "cohen_kappa": result.metrics.cohen_kappa,
+                    "n_items": result.metrics.n_items,
+                },
+            )
+    finally:
+        # Langfuse envoie ses requêtes de façon asynchrone : sans flush explicite,
+        # le script peut se terminer avant l'envoi et perdre les dernières traces.
+        get_client().flush()
 
     _print_metrics(result.metrics)
 
 
-def _print_metrics(metrics) -> None:  # type: ignore[no-untyped-def]
+def _print_metrics(metrics: ScoringMetrics) -> None:
     """Affiche les métriques dans un tableau lisible."""
     table = Table(title="Résultats du benchmark")
     table.add_column("Métrique")
