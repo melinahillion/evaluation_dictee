@@ -126,7 +126,7 @@ def run_benchmark(
             f"  2. Les images sont introuvables : {config.data.images_path}\n"
             "     (les noms dans le CSV doivent correspondre aux fichiers du dossier)\n"
             "  3. Les identifiants S3 ne sont pas configurés.\n"
-            'Diagnostic : python -c "'
+            'Diagnostic : uv run python -c "'
             "from evaluation_dictee.data.loaders import load_labels; "
             f"labels=load_labels('{config.data.labels_path}'); "
             "print(len(labels), 'copies dans le CSV')\""

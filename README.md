@@ -79,11 +79,11 @@ Vérifier l'accès aux données et au modèle :
 
 ```bash
 # S3 accessible ?
-uv run python -c "from evaluation_dictee.data.loaders import load_labels; \
+uv run uv run python -c "from evaluation_dictee.data.loaders import load_labels; \
 print(len(load_labels('s3://projet-production-ecrits-depp/resultat_dictee_2015.csv')), 'copies')"
 
 # modèle accessible ?
-uv run python -c "from openai import OpenAI; from evaluation_dictee.config import Secrets; \
+uv run uv run python -c "from openai import OpenAI; from evaluation_dictee.config import Secrets; \
 s=Secrets(); c=OpenAI(base_url=s.llm_base_url, api_key=s.llm_api_key); \
 print(c.chat.completions.create(model='gemma4-26b-moe', \
 messages=[{'role':'user','content':'Dis bonjour'}], max_tokens=10).choices[0].message.content)"
@@ -112,7 +112,7 @@ et il saute les copies déjà traitées. Voir « Runs longs » pour les détails
 **Pour l'évaluation de la transcription (HTR)** sur Scoledit :
 
 ```bash
-python scripts/run_htr_benchmark.py --config configs/htr/htr_REFERENCE.yaml
+uv run scripts/run_htr_benchmark.py --config configs/htr/htr_REFERENCE.yaml
 ```
 
 Cela produit `data/processed/htr_REFERENCE_htr_predictions.jsonl` et affiche
@@ -120,14 +120,22 @@ le CER/WER moyens. Analyse dans `notebooks/05_analyse_transcription_htr.ipynb`.
 
 **Pour le fine-tuning** d'un modèle de transcription (nécessite un GPU H100) :
 ```bash
-python scripts/finetune_htr_scoledit.py --config configs/finetune/finetune_REFERENCE.yaml
+uv run scripts/finetune_htr_scoledit.py --config configs/finetune/finetune_REFERENCE.yaml
 ```
 Voir la documentation détaillée dans le script pour les prérequis d'installation
 (`unsloth`, `trl`, `bitsandbytes`).
 
 ### 4. Analyser les résultats
 
-Trois notebooks, à ouvrir dans **`notebooks/`** et à exécuter cellule par cellule :
+Trois notebooks, à ouvrir dans **`notebooks/`** et à exécuter cellule par cellule.
+Installer d'abord les dépendances notebooks (JupyterLab, matplotlib) puis lancer
+JupyterLab via uv :
+
+```bash
+uv sync --extra notebooks            # une seule fois
+uv run jupyter lab                   # ouvre l'interface
+```
+
 
 | Notebook | Ce qu'il fait | Prérequis |
 |----------|---------------|-----------|
@@ -171,7 +179,7 @@ which screen && echo "OK" || echo "absent"
 
 # Créer une session détachable et lancer le run :
 screen -S dictee
-python scripts/run_benchmark.py --config configs/scoring/dictee_REFERENCE.yaml
+uv run scripts/run_benchmark.py --config configs/scoring/dictee_REFERENCE.yaml
 
 # Détacher :         Ctrl+A  puis  D    (le job continue en arrière-plan)
 # Rattacher :        screen -r dictee
@@ -184,7 +192,7 @@ python scripts/run_benchmark.py --config configs/scoring/dictee_REFERENCE.yaml
 ```bash
 mkdir -p logs    # créer le dossier si pas encore fait
 
-nohup python scripts/run_benchmark.py --config configs/scoring/dictee_REFERENCE.yaml \
+nohup uv run scripts/run_benchmark.py --config configs/scoring/dictee_REFERENCE.yaml \
       > logs/dictee_REFERENCE.log 2>&1 &
 echo $! > logs/dictee_REFERENCE.pid    # noter le PID pour arrêter plus tard
 
@@ -306,11 +314,11 @@ evaluation_dictee/
 Avant chaque commit :
 
 ```bash
-ruff format src tests scripts        # formatage automatique
-ruff check src tests scripts         # lint (attrape les erreurs courantes)
-pytest                               # lance toute la suite de tests
-pytest tests/test_alignment.py -v    # tester UN fichier précis
-pytest -k "chain_of_thought"         # tests dont le nom matche un motif
+uv run ruff format src tests scripts        # formatage automatique
+uv run ruff check src tests scripts         # lint (attrape les erreurs courantes)
+uv run pytest                               # lance toute la suite de tests
+uv run pytest tests/test_alignment.py -v    # tester UN fichier précis
+uv run pytest -k "chain_of_thought"         # tests dont le nom matche un motif
 ```
 
 **Ne jamais committer** les données (`data/`), les checkpoints (`checkpoints/`),
@@ -323,26 +331,32 @@ README, avec ses prérequis et son contexte d'usage.
 
 ```bash
 # ─────────── Installation & configuration (une seule fois) ───────────
-uv sync                                          # environnement Python
-# ou : pip install -e ".[dev]"
+uv sync                                          # environnement Python (groupe dev inclus d'office)
 cp .env.example .env && nano .env                # renseigner LLM_API_KEY et S3
 
+# ─────────── Configuration Langfuse (une seule fois) ───────────
+# --env-file .env : Langfuse lit ses clés dans os.environ, que .env n'alimente pas seul.
+uv run --env-file .env add-langfuse-prompt       # pousse les prompts d'évaluation
+uv run --env-file .env add-langfuse-models       # enregistre le coût théorique/1M tokens
+                                                 # (prix GPU amorti, ajustables dans
+                                                 #  utils/add_langfuse_models.py)
+
 # ─────────── Vérifier que tout marche ───────────
-python -c "from evaluation_dictee.data.loaders import load_labels; \
+uv run python -c "from evaluation_dictee.data.loaders import load_labels; \
     print(len(load_labels('s3://projet-production-ecrits-depp/resultat_dictee_2015.csv')), 'copies')"
-pytest -q                                        # lancer les tests
+uv run pytest -q                                 # lancer les tests
 
 # ─────────── Benchmark scoring dictée ───────────
 # Config de référence prête à l'emploi (approche end_to_end). Pour comparer une
 # autre approche/variante (two_stage, chain-of-thought, autre modèle), copier la
 # référence et ajuster (voir configs/README.md).
-python scripts/run_benchmark.py --config configs/scoring/dictee_REFERENCE.yaml
+uv run scripts/run_benchmark.py --config configs/scoring/dictee_REFERENCE.yaml
 
 # ─────────── Évaluation de la transcription HTR (Scoledit) ───────────
-python scripts/run_htr_benchmark.py --config configs/htr/htr_REFERENCE.yaml
+uv run scripts/run_htr_benchmark.py --config configs/htr/htr_REFERENCE.yaml
 
 # ─────────── Fine-tuning HTR (GPU H100 requis) ───────────
-python scripts/finetune_htr_scoledit.py --config configs/finetune/finetune_REFERENCE.yaml
+uv run scripts/finetune_htr_scoledit.py --config configs/finetune/finetune_REFERENCE.yaml
 
 # ─────────── Runs longs (session détachable) ───────────
 mkdir -p logs                                    # toujours créer d'abord
@@ -352,7 +366,7 @@ which screen && screen -S dictee                 # puis Ctrl+A D pour détacher
                                                  # screen -r dictee pour rattacher
 
 # Option B : nohup (toujours dispo, sans interface interactive)
-nohup python scripts/run_benchmark.py --config configs/scoring/dictee_REFERENCE.yaml \
+nohup uv run scripts/run_benchmark.py --config configs/scoring/dictee_REFERENCE.yaml \
       > logs/dictee_REFERENCE.log 2>&1 &
 
 # ─────────── Surveillance d'un run en cours ───────────
@@ -360,14 +374,15 @@ tail -f logs/dictee_REFERENCE.log
 watch -n 5 "wc -l data/processed/dictee_REFERENCE_predictions.jsonl"
 
 # ─────────── Analyse des résultats ───────────
-jupyter lab notebooks/03_analyse_resultats.ipynb   # analyse statistique + export DEPP
-jupyter lab notebooks/04_diagnostic.ipynb          # inspection copie par copie
-jupyter lab notebooks/05_analyse_transcription_htr.ipynb   # analyse HTR
+uv sync --extra notebooks                          # une seule fois (JupyterLab + matplotlib)
+uv run jupyter lab notebooks/03_analyse_resultats.ipynb   # analyse statistique + export DEPP
+uv run jupyter lab notebooks/04_diagnostic.ipynb          # inspection copie par copie
+uv run jupyter lab notebooks/05_analyse_transcription_htr.ipynb   # analyse HTR
 
 # ─────────── Qualité de code (avant tout commit) ───────────
-ruff format src tests scripts
-ruff check src tests scripts
-pytest
+uv run ruff format src tests scripts
+uv run ruff check src tests scripts
+uv run pytest
 ```
 
 ---

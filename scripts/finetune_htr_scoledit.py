@@ -12,11 +12,11 @@ base à l'inférence. Le fichier de configuration YAML pilote tous les
 hyperparamètres pour la reproductibilité.
 
 Prérequis (à installer sur le service GPU Onyxia) :
-    pip install unsloth trl peft transformers bitsandbytes accelerate
+    uv pip install unsloth trl peft transformers bitsandbytes accelerate
                 datasets pillow s3fs pyyaml pydantic mlflow
 
 Usage :
-    python scripts/finetune_htr_scoledit.py --config configs/finetune/finetune_REFERENCE.yaml
+    uv run scripts/finetune_htr_scoledit.py --config configs/finetune/finetune_REFERENCE.yaml
 
 Ce script s'exécute sur une H100/A100 80 Go du SSP Cloud. Ne pas lancer sans GPU.
 """

@@ -31,6 +31,22 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# Dépendances lourdes, installées seulement sur les machines GPU
+gpu = [
+    "torch>=2.3",
+    "transformers>=4.45",
+    "vllm>=0.6",
+    "qwen-vl-utils>=0.0.8",
+]
+# Exploration en notebooks (analyse des résultats, diagnostics)
+notebooks = [
+    "jupyterlab>=4.6.1",
+    "matplotlib>=3.11.1",
+]
+
+# Outillage de développement (lint, typage, tests) — NON publié avec le paquet.
+# Le groupe `dev` est installé automatiquement par un simple `uv sync`.
+[dependency-groups]
 dev = [
     "ruff>=0.4",
     "mypy>=1.10",
@@ -39,17 +55,11 @@ dev = [
     "types-pyyaml",
     "pandas-stubs",
 ]
-# Dépendances lourdes, installées seulement sur les machines GPU
-gpu = [
-    "torch>=2.3",
-    "transformers>=4.45",
-    "vllm>=0.6",
-    "qwen-vl-utils>=0.0.8",
-]
 
 [project.scripts]
 eval-ecrit = "evaluation_dictee.cli:app"
 add-langfuse-prompt = "evaluation_dictee.utils.add_langfuse_prompt:push_prompts"
+add-langfuse-models = "evaluation_dictee.utils.add_langfuse_models:push_models"
 
 [build-system]
 requires = ["hatchling"]

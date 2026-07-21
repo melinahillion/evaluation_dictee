@@ -126,9 +126,9 @@ evaluation_ecrit/
 
 ## 8. Conventions de code
 
-- **Python ≥ 3.11**, gestion des dépendances avec **uv** (ou pip + venv).
-- **Formatage et lint** : `ruff` (formatage + lint). Lancer `ruff check` et
-  `ruff format` avant chaque commit.
+- **Python ≥ 3.11**, gestion des dépendances avec **uv** exclusivement.
+- **Formatage et lint** : `ruff` (formatage + lint). Lancer `uv run ruff check` et
+  `uv run ruff format` avant chaque commit.
 - **Typage** : annoter toutes les fonctions publiques. `mypy` en CI (non bloquant
   au début).
 - **Docstrings** en français, style court (une ligne de résumé + Args/Returns si utile).
@@ -149,17 +149,17 @@ evaluation_ecrit/
 ## 9. Commandes utiles
 
 ```bash
-# Installer l'environnement
-uv sync                         # ou: pip install -e ".[dev]"
+# Installer l'environnement (le groupe dev — ruff, mypy, pytest — est inclus d'office)
+uv sync
 
 # Qualité de code
-ruff check src tests            # lint
-ruff format src tests           # formatage
-pytest                          # tests
-mypy src                        # typage
+uv run ruff check src tests     # lint
+uv run ruff format src tests    # formatage
+uv run pytest                   # tests
+uv run mypy src                 # typage
 
 # Lancer un benchmark à partir d'une config
-python scripts/run_benchmark.py --config configs/scoring/dictee_REFERENCE.yaml
+uv run scripts/run_benchmark.py --config configs/scoring/dictee_REFERENCE.yaml
 ```
 
 ### Runs longs — utiliser screen ou nohup
@@ -180,7 +180,7 @@ mkdir -p logs
 navigateur et revenir le lendemain.
 ```bash
 screen -S dictee                                            # créer la session
-python scripts/run_benchmark.py --config configs/scoring/dictee_REFERENCE.yaml
+uv run scripts/run_benchmark.py --config configs/scoring/dictee_REFERENCE.yaml
 # Détacher : Ctrl+A puis D  (le job continue en arrière-plan)
 screen -r dictee                                            # se rattacher plus tard
 screen -ls                                                  # lister les sessions
@@ -189,7 +189,7 @@ screen -ls                                                  # lister les session
 **Option 2 — nohup.** Sans interface interactive, log dans un fichier.
 ```bash
 mkdir -p logs
-nohup python scripts/run_benchmark.py --config configs/scoring/dictee_REFERENCE.yaml \
+nohup uv run scripts/run_benchmark.py --config configs/scoring/dictee_REFERENCE.yaml \
       > logs/dictee_REFERENCE.log 2>&1 &
 echo $! > logs/dictee_REFERENCE.pid          # noter le PID pour arrêter plus tard
 tail -f logs/dictee_REFERENCE.log            # suivre le log en direct

@@ -32,7 +32,7 @@ uv run scripts/run_benchmark.py --config configs/scoring/dictee_REFERENCE.yaml
 uv run scripts/run_htr_benchmark.py --config configs/htr/htr_REFERENCE.yaml
 
 # 3. Fine-tuning HTR (à lancer sur un service GPU).
-python scripts/finetune_htr_scoledit.py --config configs/finetune/finetune_REFERENCE.yaml
+uv run scripts/finetune_htr_scoledit.py --config configs/finetune/finetune_REFERENCE.yaml
 ```
 
 > **Astuce paramétrage** : dans presque tous les fichiers, **`limit`** borne le

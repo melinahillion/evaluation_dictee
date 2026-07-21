@@ -5,7 +5,7 @@ construit le modèle, lance le benchmark et affiche les métriques. Suivre le fi
 de `run_benchmark` (dans src/.../pipeline/benchmark.py) pour comprendre le projet.
 
 Usage :
-    python scripts/run_benchmark.py --config configs/scoring/dictee_REFERENCE.yaml
+    uv run scripts/run_benchmark.py --config configs/scoring/dictee_REFERENCE.yaml
 """
 
 from __future__ import annotations

@@ -10,10 +10,10 @@
 #  Schéma de validation : FinetuneConfig (scripts/finetune_htr_scoledit.py).
 #
 #  Prérequis :
-#    pip install unsloth trl peft transformers bitsandbytes \
+#    uv pip install unsloth trl peft transformers bitsandbytes \
 #                accelerate datasets pillow s3fs pyyaml pydantic mlflow
 #  Lancer :
-#    python scripts/finetune_htr_scoledit.py --config configs/finetune/<fichier>.yaml
+#    uv run scripts/finetune_htr_scoledit.py --config configs/finetune/<fichier>.yaml
 #
 #  Voir configs/README.md pour la logique d'ensemble.
 # ═══════════════════════════════════════════════════════════════════════════
