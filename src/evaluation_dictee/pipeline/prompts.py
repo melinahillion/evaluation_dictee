@@ -125,20 +125,28 @@ _FORMAT_ITEMS_COT = (
     "Réponds UNIQUEMENT par un objet JSON, sans texte autour ni de notes, de la forme :\n"
     '{"items": [{"item_id": "...", "transcription": "ce que l\'élève a écrit", '
     '"comparaison": "identique" OU description brève de la différence, '
-    '"code": "1", "confidence": 0.95}, ...]}.\n'
+    '"code": "1", "confidence": 0.95, "reason": "les raisons du choix"}, ...]}.\n'
     'Tout ajout de texte hors de la structure du JSON sera pris comme une erreur par le pipeline.'
 )
 _FORMAT_ITEMS_SIMPLE = (
     "Réponds UNIQUEMENT par un objet JSON, sans texte autour ni de notes, de la forme :\n"
     '{"items": [{"item_id": "...", "transcription": "ce que l\'élève a écrit", '
-    '"code": "1", "confidence": 0.95}, ...]}.\n'
+    '"code": "1", "confidence": 0.95, "reason": "les raisons du choix"}, ...]}.\n'
     'Tout ajout de texte hors de la structure du JSON sera pris comme une erreur par le pipeline.'
 )
 
+# Consignes sur les ratures
 # Consigne « ratures » propre à l'étape de transcription (formulation dédiée).
 _CONSIGNE_RATURES_TRANSCRIPTION = (
     "Si l'élève a raturé puis réécrit, transcris uniquement la version "
     "FINALE (non barrée). Ignore complètement le texte barré.\n"
+)
+
+# Consigne « ratures » propre à l'étape d'évaluation directe
+_CONSIGNE_RATURES_DICTATION = (
+    "Si l'élève a raturé puis réécrit, ignore complètement le texte barré dans ton output."
+    "Il s'agit d'une correction faite par l'élève, les mots raturés ne doivent pas être pris "
+    "en compte dans la correction."
 )
 
 
@@ -163,7 +171,8 @@ _TEMPLATE_DICTATION: list[ChatMessageDict] = [
             + _CONSIGNE_ALIGNEMENT
             + "{{consignes_optionnelles}}\n\n"
             + _CONSIGNE_CONFIANCE
-            + "{{consigne_cot}}"
+            + "{{consigne_cot}}\n\n"
+            + _CONSIGNE_RATURES_DICTATION
         ),
     },
     {
