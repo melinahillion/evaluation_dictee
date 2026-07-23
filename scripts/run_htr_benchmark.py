@@ -19,7 +19,7 @@ logger = get_logger(__name__)
 
 
 def main() -> None:
-    """Charge la config, transcrit le corpus Scoledit, affiche CER/WER."""
+    """Transcrit le corpus Scoledit et affiche CER/WER."""
     parser = argparse.ArgumentParser(description="Évalue la transcription HTR.")
     parser.add_argument("--config", required=True, help="Chemin du fichier YAML.")
     args = parser.parse_args()

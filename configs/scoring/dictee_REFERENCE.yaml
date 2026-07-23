@@ -81,7 +81,7 @@ data:
   grid_path: configs/grille_dictee_2015.json
   # Nombre de copies à traiter. null = tout le corpus.     [défaut : null]
   # Commencer petit (5–20) pour valider la chaîne, puis passer à null.
-  limit: 20
+  limit: null
 
 # ── Grille de codage ────────────────────────────────────────────────────────
 grid:

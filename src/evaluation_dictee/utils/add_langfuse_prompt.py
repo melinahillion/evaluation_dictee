@@ -1,19 +1,8 @@
-"""Initialise / met à jour les prompts d'évaluation dans Langfuse.
+"""Pousse les templates chat de `pipeline/prompts.py` vers Langfuse.
 
-Pousse les trois templates chat (message system + message user) définis dans
-`pipeline/prompts.py` vers le gestionnaire de prompts de Langfuse. Chaque appel
-crée une NOUVELLE version de chaque prompt et la promeut en production via le
-label "production".
-
-Les variables entre doubles accolades ({{reference_text}}, {{grille}}, ...) sont
-des placeholders Langfuse. Elles sont remplies à l'exécution par les fonctions
-build_* de prompts.py via compile(). La logique conditionnelle (schéma de codage,
-flags de PromptConfig) reste dans le code : elle choisit la valeur injectée dans
-chaque variable (texte d'un bloc optionnel, ou chaîne vide). On garde donc un seul
-prompt versionné par fonction, pas une version par combinaison de flags.
-
-Prérequis : LANGFUSE_HOST, LANGFUSE_PUBLIC_KEY et LANGFUSE_SECRET_KEY définis dans
-l'environnement (ou le fichier .env). Voir .env.example.
+Nouvelle version promue en production à chaque appel.
+La logique conditionnelle (schéma, flags) reste dans le code : un seul prompt
+versionné par fonction, pas une version par combinaison de flags.
 
 Usage :
     uv run add-langfuse-prompt
@@ -38,7 +27,7 @@ def push_prompts() -> None:
             name=name,
             type="chat",
             prompt=list(messages),
-            labels=["production"],  # promeut cette version comme version de prod
+            labels=["production"],
         )
         logger.info(
             "Prompt « %s » poussé (version %s), labels : %s",
@@ -47,8 +36,7 @@ def push_prompts() -> None:
             prompt.labels,
         )
 
-    # Langfuse envoie ses requêtes de façon asynchrone : flush explicite avant de
-    # terminer le script, sinon les créations peuvent être perdues.
+    # Flush explicite : Langfuse envoie en asynchrone, sinon les créations sont perdues.
     langfuse.flush()
 
 

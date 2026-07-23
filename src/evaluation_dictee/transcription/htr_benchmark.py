@@ -1,11 +1,7 @@
-"""Pipeline d'évaluation de la TRANSCRIPTION (HTR) sur le corpus Scoledit.
+"""Pipeline d'évaluation de la TRANSCRIPTION (HTR) sur le corpus Scoledit (CER/WER).
 
-Objectif distinct du codage de dictée : mesurer, isolément, à quel point un modèle
-lit fidèlement l'écriture manuscrite d'un enfant (fautes comprises). On compare la
-transcription du modèle à la transcription de référence Scoledit via CER/WER.
-
-Architecture volontairement modulaire pour changer de modèle facilement : le
-transcripteur encapsule l'appel VLM et n'expose que `transcribe(image_path) -> str`.
+Le transcripteur encapsule l'appel VLM et n'expose que `transcribe(image_path) -> str`,
+pour changer de modèle facilement.
 """
 
 from __future__ import annotations
@@ -34,18 +30,21 @@ from evaluation_dictee.transcription.scoledit import ScoledtSample
 
 
 def _image_to_data_url(image: Image.Image) -> str:
-    """Encode une image PIL en data URL base64."""
+    """Encode une image PIL en data URL base64.
+
+    Args:
+        image: Image PIL à encoder.
+
+    Returns:
+        Data URL PNG encodée en base64.
+    """
     buffer = io.BytesIO()
     image.save(buffer, format="PNG")
     return "data:image/png;base64," + base64.b64encode(buffer.getvalue()).decode("utf-8")
 
 
 class VLMTranscriber:
-    """Transcripteur HTR basé sur un VLM (API compatible OpenAI).
-
-    Changer de modèle = changer `model_config.name`. Toute l'évaluation aval
-    (CER/WER) est indépendante du modèle choisi.
-    """
+    """Transcripteur HTR basé sur un VLM (API compatible OpenAI)."""
 
     def __init__(
         self,
@@ -54,28 +53,26 @@ class VLMTranscriber:
         api_key: str,
         read_final_state: bool = True,
     ) -> None:
-        """Initialise le client de transcription.
+        """Initialise le client de transcription (read_final_state : état final si rature).
 
         Args:
-            model_config: modèle multimodal à utiliser.
-            base_url: URL de l'API.
-            api_key: clé d'API.
-            read_final_state: consigne de lire l'état final en cas de rature.
+            model_config: Configuration du modèle VLM (nom, température, retries...).
+            base_url: URL de base de l'API compatible OpenAI.
+            api_key: Clé d'API.
+            read_final_state: Si True, lire l'état final (version corrigée) en cas de rature.
         """
         self.model_config = model_config
         self.client = OpenAI(base_url=base_url, api_key=api_key)
-        # Messages (system + user) du prompt de transcription ; l'image est jointe
-        # au message user à chaque appel via attach_image.
         self.prompt_messages = build_transcription_prompt(read_final_state=read_final_state)
 
     def transcribe(self, image_path: str) -> str:
-        """Transcrit une image manuscrite en texte brut (fautes préservées).
+        """Transcrit une image manuscrite en texte brut, fautes préservées (vide si échec).
 
         Args:
-            image_path: chemin de l'image (local ou s3://).
+            image_path: Chemin de l'image à transcrire.
 
         Returns:
-            La transcription produite par le modèle (chaîne vide si échec).
+            Transcription du texte, ou chaîne vide si tous les essais échouent.
         """
         image = load_image(image_path)
         messages = cast(
@@ -98,7 +95,14 @@ class VLMTranscriber:
 
     @staticmethod
     def _parse(content: str) -> str:
-        """Extrait le champ 'transcription' du JSON, avec repli sur texte brut."""
+        """Extrait le champ 'transcription' du JSON, avec repli sur texte brut.
+
+        Args:
+            content: Réponse brute du modèle (JSON éventuellement en bloc markdown).
+
+        Returns:
+            Transcription extraite, ou le contenu brut si le JSON est invalide.
+        """
         try:
             cleaned = content.strip().removeprefix("```json").removeprefix("```")
             cleaned = cleaned.removesuffix("```").strip()
@@ -109,14 +113,7 @@ class VLMTranscriber:
 
 @dataclass
 class HTRBenchmarkResult:
-    """Résultat d'un benchmark de transcription.
-
-    Attributes:
-        per_sample: DataFrame par échantillon (scan, cer, wer, ...).
-        mean_cer / mean_wer : moyennes (micro-pondérées par longueur).
-        n_echecs: nombre d'images sans transcription exploitable.
-        predictions_path: chemin du fichier de prédictions sauvegardé.
-    """
+    """Résultat d'un benchmark de transcription."""
 
     per_sample: pd.DataFrame
     mean_cer: float
@@ -135,13 +132,14 @@ def run_htr_benchmark(
     """Transcrit tous les échantillons et calcule les métriques HTR.
 
     Args:
-        samples: échantillons Scoledit (image + référence).
-        transcriber: transcripteur (encapsule le modèle choisi).
-        run_name: nom du run (pour le fichier de sortie).
-        output_dir: dossier de sauvegarde des prédictions.
+        samples: Échantillons Scoledit à transcrire.
+        transcriber: Transcripteur VLM à utiliser.
+        run_name: Nom du run (préfixe du fichier de prédictions JSONL).
+        output_dir: Dossier de sortie des prédictions.
 
     Returns:
-        Les résultats agrégés et par échantillon.
+        Résultat du benchmark : prédictions par échantillon, CER/WER moyens
+        (micro-pondérés par la longueur de la référence) et scans en échec.
     """
     records = []
     failed = []
@@ -167,7 +165,7 @@ def run_htr_benchmark(
         )
 
     df = pd.DataFrame(records)
-    # CER/WER micro-pondérés par la longueur de la référence (échantillons transcrits)
+    # CER/WER micro-pondérés par la longueur de la référence
     ok = df[df["transcrit"]]
     mean_cer = (
         float((ok["cer"] * ok["n_char_ref"]).sum() / ok["n_char_ref"].sum())

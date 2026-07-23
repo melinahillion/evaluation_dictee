@@ -1,9 +1,4 @@
-"""Client pour un VLM open weight servi par vLLM (API compatible OpenAI).
-
-Implémente la méthode C (end-to-end) : on envoie l'image, le texte de référence
-et la grille, et le modèle renvoie un code par item au format JSON, avec un score
-de confiance. Voir CLAUDE.md §4.
-"""
+"""VLM (vLLM, API OpenAI) pour la méthode C end-to-end : image + référence -> code JSON par item."""
 
 from __future__ import annotations
 
@@ -17,8 +12,8 @@ from openai.types.chat import ChatCompletionMessageParam
 from PIL import Image
 
 from evaluation_dictee.config import ModelConfig, PromptConfig
+from evaluation_dictee.data.grid import GridItem
 from evaluation_dictee.data.loaders import Copy, load_image
-from evaluation_dictee.data.reference import GridItem
 from evaluation_dictee.models.base import CopyPrediction, ItemPrediction, Scorer
 from evaluation_dictee.pipeline.alignment import best_realignment, needs_realignment
 from evaluation_dictee.pipeline.prompts import (
@@ -30,7 +25,14 @@ from evaluation_dictee.pipeline.prompts import (
 
 
 def _image_to_data_url(image: Image.Image) -> str:
-    """Encode une image PIL en data URL base64 (format attendu par l'API)."""
+    """Encode une image PIL en data URL base64 (format attendu par l'API).
+
+    Args:
+        image: Image PIL à encoder.
+
+    Returns:
+        Data URL `data:image/png;base64,...` de l'image encodée en PNG.
+    """
     buffer = io.BytesIO()
     image.save(buffer, format="PNG")
     encoded = base64.b64encode(buffer.getvalue()).decode("utf-8")
@@ -38,17 +40,15 @@ def _image_to_data_url(image: Image.Image) -> str:
 
 
 def _items_json_schema(chain_of_thought: bool) -> dict[str, Any]:
-    """Schéma JSON de la réponse attendue (méthode C), pour le décodage contraint.
+    """Schéma JSON de la réponse attendue (méthode C) pour le décodage contraint vLLM.
 
-    Contraint la STRUCTURE de chaque item, pas leur nombre : celui-ci varie d'une
-    copie à l'autre et n'est pas connu à l'avance. Le champ « comparaison » n'est
-    exigé qu'en mode chain-of-thought (aligné sur le prompt).
+    Contraint la structure de chaque item, pas leur nombre (variable selon la copie).
 
     Args:
-        chain_of_thought: si True, ajoute le champ « comparaison » au schéma.
+        chain_of_thought: Si True, ajoute le champ obligatoire `comparaison` à chaque item.
 
     Returns:
-        Un schéma JSON exploitable par `response_format` (json_schema) de vLLM.
+        Schéma JSON de la réponse attendue (objet avec une liste `items`).
     """
     properties: dict[str, Any] = {
         "item_id": {"type": "string"},
@@ -84,16 +84,15 @@ class VLMScorer(Scorer):
         grid_items: list[GridItem],
         scheme: str = "simplifiee",
     ) -> None:
-        """Initialise le client.
+        """Initialise le client et l'index des items de la grille.
 
         Args:
-            model_config: paramètres du modèle.
-            prompt_config: stratégie de prompting.
-            base_url: URL de l'API vLLM (compatible OpenAI).
-            api_key: clé d'API (factice en interne SSP Cloud).
-            grid_items: items de la grille (id + mot attendu), pour ancrer
-                l'alignement dans le prompt.
-            scheme: schéma de codage demandé au modèle ("simplifiee" ou "complete").
+            model_config: Configuration du modèle (nom, température, retries, etc.).
+            prompt_config: Configuration du prompt (chain-of-thought, etc.).
+            base_url: URL de base de l'API compatible OpenAI.
+            api_key: Clé d'API.
+            grid_items: Items de la grille de codage.
+            scheme: Grille de codage utilisée (par défaut « simplifiee »).
         """
         self.model_config = model_config
         self.prompt_config = prompt_config
@@ -103,17 +102,17 @@ class VLMScorer(Scorer):
         self._items_by_id = {it.item_id: it for it in grid_items}
 
     def score_copy(self, copy: Copy, reference_text: str | None) -> CopyPrediction:
-        """Évalue une copie complète en un appel au VLM.
+        """Évalue une copie complète en un appel au VLM (avec retries à température relevée).
 
         Args:
-            copy: copie à évaluer.
-            reference_text: texte de référence de la dictée.
+            copy: Copie à évaluer.
+            reference_text: Texte de référence de la dictée, ou None.
 
         Returns:
-            Prédictions par item.
+            Prédiction de la copie ; `transcribed=False` si aucun essai n'a produit
+            de transcription exploitable.
         """
         image = load_image(copy.image_path)
-        # On code les items présents dans la copie, dans l'ordre de la grille.
         items_a_coder = [self._items_by_id[i] for i in copy.item_ids if i in self._items_by_id]
         messages = cast(
             "list[ChatCompletionMessageParam]",
@@ -127,13 +126,10 @@ class VLMScorer(Scorer):
                 _image_to_data_url(image),
             ),
         )
-        # Lie la génération à la version du prompt dans les traces Langfuse.
-        # No-op si Langfuse est hors ligne ou si le prompt vient du repli local.
+        # Lie la génération à la version du prompt dans les traces Langfuse (no-op si hors ligne).
         prompt_ref = fetch_prompt(PROMPT_DICTATION)
         trace_kwargs: dict[str, Any] = {"langfuse_prompt": prompt_ref} if prompt_ref else {}
 
-        # Décodage contraint : le modèle est FORCÉ de produire un JSON conforme au
-        # schéma (aucun texte hors JSON), ce qui garantit une réponse parsable.
         response_format_kwargs: dict[str, Any] = {}
         if self.model_config.structured_output:
             response_format_kwargs["response_format"] = {
@@ -144,15 +140,11 @@ class VLMScorer(Scorer):
                 },
             }
 
-        # Tentatives successives tant que la réponse n'est pas exploitable.
-        # On augmente légèrement la température aux essais suivants pour sortir
-        # d'une éventuelle réponse vide déterministe.
+        # Retry avec température légèrement relevée pour sortir d'une réponse vide déterministe.
         prediction: CopyPrediction | None = None
         for attempt in range(self.model_config.max_retries + 1):
             temp = self.model_config.temperature + (0.3 if attempt > 0 else 0.0)
-            # Les modèles thinking (Qwen3, DeepSeek-R1) génèrent par défaut un
-            # bloc <think>...</think> qui casse le parsing JSON et multiplie la
-            # latence. On le désactive via extra_body quand disable_thinking=True.
+            # disable_thinking : coupe le bloc <think>, néfaste au parsing JSON et à la latence.
             extra_body = (
                 {"chat_template_kwargs": {"enable_thinking": False}}
                 if self.model_config.disable_thinking
@@ -172,19 +164,18 @@ class VLMScorer(Scorer):
             prediction.n_attempts = attempt + 1
             if prediction.transcribed:
                 return prediction
-        # Toutes les tentatives ont échoué : copie non transcrite.
         return prediction  # type: ignore[return-value]
 
     def _parse_response(self, copy: Copy, content: str) -> CopyPrediction:
-        """Parse la réponse JSON du modèle en prédictions par item.
+        """Parse la réponse JSON en prédictions par item, avec ré-alignement si décalage détecté.
 
-        Le modèle renvoie un objet de la forme :
-            {"items": [{"item_id": "...", "transcription": "...", "code": "1",
-                        "confidence": 0.97}, ...]}
+        Args:
+            copy: Copie évaluée (fournit la liste d'items attendus).
+            content: Contenu textuel brut renvoyé par le modèle (JSON éventuellement balisé).
 
-        Robuste aux réponses imparfaites. Applique en outre un filet de sécurité :
-        si la transcription du modèle révèle un décalage (mot scindé/collé par
-        l'élève), les prédictions sont ré-alignées sur les mots attendus.
+        Returns:
+            Prédiction de la copie ; `transcribed=False` et items codés « ? » si la
+            réponse est vide ou inexploitable.
         """
         try:
             cleaned = content.strip().removeprefix("```json").removeprefix("```")
@@ -194,7 +185,7 @@ class VLMScorer(Scorer):
         except (json.JSONDecodeError, KeyError, TypeError):
             raw_items = []
 
-        # Séquence des prédictions DANS L'ORDRE renvoyé par le modèle.
+        # Séquences dans l'ordre renvoyé par le modèle (avant ré-alignement éventuel).
         codes_seq = [str(it.get("code", "?")).strip() for it in raw_items]
         trans_seq = [it.get("transcription") for it in raw_items]
         conf_seq = [it.get("confidence") for it in raw_items]
@@ -207,7 +198,6 @@ class VLMScorer(Scorer):
             ]
             return CopyPrediction(copy_id=copy.copy_id, items=items_vides, transcribed=False)
 
-        # Mots attendus dans l'ordre de la copie.
         expected_words = [
             self._items_by_id[i].attendu for i in copy.item_ids if i in self._items_by_id
         ]
@@ -226,7 +216,6 @@ class VLMScorer(Scorer):
             ]
             return CopyPrediction(copy_id=copy.copy_id, items=items)
 
-        # Sinon : mapping classique par item_id renvoyé par le modèle.
         by_id = {it.get("item_id"): it for it in raw_items}
         items = []
         for item_id in copy.item_ids:

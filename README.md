@@ -4,8 +4,7 @@
 l'aide de modèles multimodaux open weight, et **comparer rigoureusement** le codage
 automatique à celui d'un correcteur expert. Collaboration **DEPP × SSP Lab (INSEE)**.
 
-> Contexte complet et décisions : voir **[CLAUDE.md](CLAUDE.md)**, la
-> **[note méthodologique](docs/note_methodologique.md)** et les
+> Contexte complet et décisions : voir **[CLAUDE.md](CLAUDE.md)** et les
 > **[décisions](docs/decisions.md)** dans [`docs/`](docs/).
 
 ---
@@ -47,6 +46,26 @@ erreurs de lecture de celles de jugement. Config : `configs/htr/htr_REFERENCE.ya
 script : `scripts/run_htr_benchmark.py`, analyse :
 `notebooks/05_analyse_transcription_htr.ipynb`.
 
+### Fine-tuning HTR (phase ultérieure)
+
+Pour améliorer la fidélité de lecture sur l'écriture d'enfants, on peut
+**spécialiser** un VLM par fine-tuning **QLoRA** (LoRA en 4 bits) sur le corpus
+Scoledit multi-niveaux (CP→CM2), transcriptions humaines fautes préservées. La
+sortie est un adaptateur léger (~50-200 Mo) qui se charge par-dessus le modèle de
+base. Nécessite un **GPU H100**. Suivi via **MLflow** (et non Langfuse). Config :
+`configs/finetune/finetune_REFERENCE.yaml`, script : `scripts/finetune_htr_scoledit.py`.
+
+### Documentation pédagogique (site Quarto)
+
+Un **site Quarto** (dossier [`website/`](website/)) présente le projet pour un
+public statisticien novice en IA : architecture, résultats des deux approches,
+explication détaillée des métriques d'évaluation, et fine-tuning.
+
+```bash
+quarto preview website        # aperçu local avec rechargement à chaud
+quarto render website         # génère le site statique dans website/_site/
+```
+
 ---
 
 ## Démarrage rapide (SSP Cloud / VSCode)
@@ -63,17 +82,60 @@ uv sync
 > (y compris le groupe `dev`) et configure le mode éditable automatiquement, ce qui
 > rend les imports `from evaluation_dictee...` disponibles.
 
-### 2. Configurer les accès
+### 2. Configurer les accès (Vault Onyxia + repli `.env`)
 
-Sur le SSP Cloud (Onyxia), les identifiants S3 sont généralement déjà dans
-l'environnement. Pour le modèle, il faut un token llm.lab :
+Toute la configuration sensible passe par des **variables d'environnement** ; le
+code les lit via `Secrets` (Pydantic, `src/evaluation_dictee/config.py`). **Aucun
+secret n'est jamais écrit dans le code ni dans les YAML.** Deux façons de fournir
+ces variables selon le contexte :
+
+#### Sur le SSP Cloud (recommandé) : le Vault Onyxia
+
+Onyxia intègre un **Vault** (HashiCorp) personnel : un coffre-fort où stocker ses
+secrets une fois, puis les **injecter automatiquement comme variables d'environnement**
+dans chaque service qu'on lance. On ne recopie ainsi jamais de token en clair.
+
+1. **Stocker les secrets** dans le Vault : `Mon compte` → `Vault` (SecretVault).
+   Créer un secret pour le projet (p. ex. `evaluation_dictee`) avec les clés :
+
+   | Clé | Valeur |
+   |-----|--------|
+   | `LLM_BASE_URL` | `https://llm.lab.sspcloud.fr/api/v1` |
+   | `LLM_API_KEY` | ton token llm.lab |
+   | `LANGFUSE_BASE_URL` | `https://langfuse.lab.sspcloud.fr` |
+   | `LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY` | depuis l'UI Langfuse |
+   | `MLFLOW_TRACKING_URI` | `https://mlflow.lab.sspcloud.fr` (fine-tuning) |
+
+2. **Injecter dans le service** : au lancement d'un service (VSCode, Jupyter…),
+   section `Vault`, référencer ce secret pour qu'Onyxia expose ces clés comme
+   variables d'environnement dans le conteneur. Elles sont alors disponibles sans
+   fichier `.env`.
+
+3. **Alternative en ligne de commande** — les services Onyxia ont déjà `VAULT_ADDR`
+   et `VAULT_TOKEN` positionnés, donc le CLI `vault` fonctionne directement :
+
+   ```bash
+   vault kv get <chemin>/evaluation_dictee          # lire les secrets
+   # (les identifiants S3 AWS_* sont déjà injectés par Onyxia, rien à faire)
+   ```
+
+> Les identifiants **S3** (`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`,
+> `AWS_SESSION_TOKEN`, `AWS_S3_ENDPOINT`) sont **automatiquement injectés** par
+> Onyxia dans chaque service : rien à configurer pour accéder au stockage.
+
+#### En local (hors Onyxia) : le fichier `.env`
+
+Hors SSP Cloud, ou pour un test rapide, `Secrets` retombe sur un fichier `.env`
+local (jamais commité, voir `.gitignore`) :
 
 ```bash
 cp .env.example .env
-# éditer .env :
-#   LLM_BASE_URL=https://llm.lab.sspcloud.fr/api/v1   (vérifier le chemin exact)
-#   LLM_API_KEY=<ton-token-llm.lab>
+# éditer .env : LLM_API_KEY, LANGFUSE_*, et si besoin AWS_* / MLFLOW_*
 ```
+
+`.env.example` documente toutes les variables attendues. Le code ne fait **aucune
+différence** entre une variable injectée par le Vault et une variable lue depuis
+`.env` : dans les deux cas, elle arrive par l'environnement.
 
 Vérifier l'accès aux données et au modèle :
 
@@ -117,6 +179,25 @@ uv run scripts/run_htr_benchmark.py --config configs/htr/htr_REFERENCE.yaml
 
 Cela produit `data/processed/htr_REFERENCE_htr_predictions.jsonl` et affiche
 le CER/WER moyens. Analyse dans `notebooks/05_analyse_transcription_htr.ipynb`.
+
+**Exporter les prédictions vers S3.** Le pipeline écrit en local (append + fsync
+par copie, pour la reprise sur crash). Une fois un run terminé, on pousse le JSONL
+vers le répertoire `predictions/` du bucket S3, afin de **relancer les notebooks et
+le site Quarto sans réexécuter le pipeline**. Rien n'est commité dans Git.
+
+```bash
+# scoring — end_to_end OU two_stage (même format, c'est le `name` qui distingue) :
+uv run scripts/export_predictions.py --config configs/scoring/dictee_REFERENCE.yaml
+
+# transcription HTR seule :
+uv run scripts/export_predictions.py --config configs/htr/htr_REFERENCE.yaml --htr
+
+# équivalent via la CLI installée :
+eval-ecrit export configs/scoring/dictee_REFERENCE.yaml
+```
+
+Destination : `$S3_PREDICTIONS_PREFIX/<name>_predictions.jsonl` (défaut
+`s3://projet-production-ecrits-depp/predictions`, surchargeable par `--dest-prefix`).
 
 **Pour le fine-tuning** d'un modèle de transcription (nécessite un GPU H100) :
 ```bash
@@ -253,7 +334,7 @@ rangées par famille (`scoring/`, `htr/`, `finetune/`) et documentées dans
 | `data.grid_path` | grille de codage JSON (`configs/grille_dictee_2015.json`) |
 | `data.limit` | nombre de copies (mettre `null` pour tout le corpus) |
 | `grid.scheme` | `simplifiee` (1/9/0) ou `complete` (1/3/4/5/9/0) |
-| `prompt.method` | `C` end-to-end (image → code), voir note méthodologique |
+| `prompt.method` | `C` end-to-end (image → code) |
 | `prompt.read_final_state` | règle des ratures : lire l'état final corrigé |
 
 ---
@@ -303,8 +384,9 @@ evaluation_dictee/
 │   ├── 03_analyse_resultats.ipynb   ← analyse statistique + export DEPP
 │   ├── 04_diagnostic.ipynb          ← inspection copie par copie
 │   └── 05_analyse_transcription_htr.ipynb   ← analyse HTR
+├── website/                   ← site Quarto (archi, résultats, métriques, fine-tuning)
 ├── tests/                     ← 83 tests unitaires (pytest)
-└── docs/                      ← note méthodologique, cadrage, décisions, grille
+└── docs/                      ← décisions, grille de codage, schéma du pipeline
 ```
 
 ---
@@ -332,7 +414,9 @@ README, avec ses prérequis et son contexte d'usage.
 ```bash
 # ─────────── Installation & configuration (une seule fois) ───────────
 uv sync                                          # environnement Python (groupe dev inclus d'office)
-cp .env.example .env && nano .env                # renseigner LLM_API_KEY et S3
+# Secrets : sur Onyxia, via le Vault (Mon compte > Vault, injecté comme variables
+# d'env). En local, repli sur un .env :
+cp .env.example .env && nano .env                # renseigner LLM_API_KEY, LANGFUSE_*, S3
 
 # ─────────── Configuration Langfuse (une seule fois) ───────────
 # --env-file .env : Langfuse lit ses clés dans os.environ, que .env n'alimente pas seul.
@@ -378,6 +462,10 @@ uv sync --extra notebooks                          # une seule fois (JupyterLab 
 uv run jupyter lab notebooks/03_analyse_resultats.ipynb   # analyse statistique + export DEPP
 uv run jupyter lab notebooks/04_diagnostic.ipynb          # inspection copie par copie
 uv run jupyter lab notebooks/05_analyse_transcription_htr.ipynb   # analyse HTR
+
+# ─────────── Site de documentation (Quarto) ───────────
+quarto preview website                             # aperçu local (rechargement à chaud)
+quarto render website                              # génère website/_site/
 
 # ─────────── Qualité de code (avant tout commit) ───────────
 uv run ruff format src tests scripts

@@ -1,11 +1,6 @@
-"""Point d'entrée simple pour lancer un benchmark.
+"""Point d'entrée pour lancer un benchmark de scoring.
 
-Pour les débutant·e·s : ce script est volontairement minimal. Il lit une config,
-construit le modèle, lance le benchmark et affiche les métriques. Suivre le fil
-de `run_benchmark` (dans src/.../pipeline/benchmark.py) pour comprendre le projet.
-
-Usage :
-    uv run scripts/run_benchmark.py --config configs/scoring/dictee_REFERENCE.yaml
+Usage : uv run scripts/run_benchmark.py --config configs/scoring/dictee_REFERENCE.yaml
 """
 
 from __future__ import annotations
@@ -15,7 +10,7 @@ import argparse
 from langfuse import get_client
 
 from evaluation_dictee.config import Secrets, load_config
-from evaluation_dictee.data.reference import load_grid
+from evaluation_dictee.data.grid import load_grid
 from evaluation_dictee.evaluation.calibration import referral_curve
 from evaluation_dictee.models.factory import build_scorer
 from evaluation_dictee.pipeline.benchmark import run_benchmark
@@ -26,7 +21,7 @@ logger = get_logger(__name__)
 
 
 def main() -> None:
-    """Parse les arguments, lance le benchmark, affiche métriques et calibration."""
+    """Lance le benchmark et affiche métriques et calibration."""
     parser = argparse.ArgumentParser(description="Lance un benchmark d'évaluation.")
     parser.add_argument("--config", required=True, help="Chemin du fichier YAML.")
     args = parser.parse_args()
@@ -54,8 +49,8 @@ def main() -> None:
                 },
             )
     finally:
-        # Langfuse envoie les traces de façon asynchrone : sans flush explicite,
-        # le script peut se terminer avant l'envoi et perdre les dernières traces.
+        # Langfuse envoie les traces en asynchrone : flush obligatoire sinon les
+        # dernières traces sont perdues si le script se termine avant l'envoi.
         get_client().flush()
 
     logger.info("Accord brut : %.1f%%", result.metrics.raw_agreement * 100)
