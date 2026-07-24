@@ -23,6 +23,13 @@ name: dictee_REFERENCE
 # Graine aléatoire, pour la reproductibilité.               [défaut : 42]
 seed: 42
 
+# Nombre de copies évaluées EN PARALLÈLE.                   [défaut : 8]
+# Le endpoint vLLM batche les requêtes concurrentes : passer de 1 (séquentiel) à N
+# divise le temps mural tant que le serveur suit (débit borné par le GPU). Monter
+# (16, 32…) si l'endpoint tient ; redescendre en cas de timeouts / 429. 1 = ancien
+# comportement séquentiel.
+concurrency: 8
+
 # Approche d'évaluation :                                   [défaut : end_to_end]
 #   end_to_end : un VLM lit l'image ET code en une seule passe (méthode C).
 #   two_stage  : étape 1 = transcription (HTR), étape 2 = codage du texte.

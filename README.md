@@ -171,6 +171,13 @@ reprend automatiquement où il s'était arrêté : si un run est interrompu
 (déconnexion, erreur API, kernel tué), il suffit de **relancer la même commande**
 et il saute les copies déjà traitées. Voir « Runs longs » pour les détails.
 
+**Vitesse : évaluation en parallèle.** Les copies sont évaluées concurremment
+(le endpoint vLLM batche les requêtes) — réglé par `concurrency` dans le YAML
+(défaut **8**). C'est le principal levier de temps mural : passer de 1 à N copies
+en parallèle divise d'autant la durée tant que le serveur suit. Monter (16, 32…)
+si l'endpoint tient, redescendre en cas de timeouts / erreurs 429. Seul le scoring
+est parallélisé : l'écriture du JSONL et la reprise restent inchangées.
+
 **Pour l'évaluation de la transcription (HTR)** sur Scoledit :
 
 ```bash

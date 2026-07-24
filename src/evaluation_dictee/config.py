@@ -82,6 +82,10 @@ class ExperimentConfig(BaseModel):
 
     name: str = Field(..., description="Nom unique du run, utilisé comme nom de trace Langfuse")
     seed: int = 42
+    # Nombre de copies évaluées EN PARALLÈLE (le endpoint vLLM batche les requêtes
+    # concurrentes). 1 = séquentiel (ancien comportement). Monter tant que le serveur
+    # suit (débit borné par le GPU) ; redescendre en cas d'erreurs/timeout.
+    concurrency: int = Field(default=8, ge=1)
     # "end_to_end" : un VLM lit l'image ET code en une passe.
     # "two_stage" : étape 1 HTR (transcription) puis étape 2 codage (isole lecture/jugement).
     approach: Literal["end_to_end", "two_stage"] = "end_to_end"

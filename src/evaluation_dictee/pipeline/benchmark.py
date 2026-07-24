@@ -5,8 +5,10 @@ Prédictions écrites dans data/processed/<run_name>_predictions.jsonl (une lign
 
 from __future__ import annotations
 
+import contextvars
 import json
 import os
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -36,6 +38,17 @@ class BenchmarkResult:
     copy_ids: list[str] = field(default_factory=list)
     predictions_path: Path | None = None
     non_transcribed: list[str] = field(default_factory=list)
+
+
+@dataclass
+class _CopyOutcome:
+    """Résultat du scoring d'une copie, produit par un worker et consommé au principal."""
+
+    copy_id: str
+    status: str  # "ok" | "failed" | "non_transcribed"
+    lines: str = ""  # lignes JSONL prêtes à écrire (status "ok")
+    error: str = ""  # message d'erreur (status "failed")
+    n_attempts: int = 1  # nombre d'essais (status "non_transcribed")
 
 
 def _load_processed_copy_ids(predictions_path: Path) -> set[str]:
@@ -68,6 +81,7 @@ def run_benchmark(
     config: ExperimentConfig,
     scorer: Scorer,
     output_dir: str | Path = "data/processed",
+    concurrency: int | None = None,
 ) -> BenchmarkResult:
     """Exécute un benchmark complet pour une config et un modèle donnés.
 
@@ -75,10 +89,16 @@ def run_benchmark(
     une erreur API sur une copie est loggée dans failed_copies.txt et le run continue.
     Pour repartir de zéro : supprimer le JSONL ou changer `config.name`.
 
+    Les copies sont évaluées en parallèle (`concurrency` requêtes vLLM concurrentes) :
+    seul le scoring est parallélisé, l'écriture du JSONL et l'agrégation restent dans
+    le thread principal (aucun verrou, crash-safety et reprise inchangées).
+
     Args:
         config: configuration de l'expérience (données, grille, nom du run).
         scorer: modèle chargé de coder chaque copie.
         output_dir: dossier où écrire les prédictions et les fichiers d'échec.
+        concurrency: nombre de copies évaluées en parallèle ; None = valeur de la
+            config (`config.concurrency`).
 
     Returns:
         Le résultat du run : métriques agrégées, labels/prédictions alignés et
@@ -132,76 +152,108 @@ def run_benchmark(
 
     reference_text = load_grid(config.data.grid_path).reference_text
     scheme = config.grid.scheme
+    workers = concurrency if concurrency is not None else config.concurrency
 
     non_transcrites: list[str] = []
     failed_copies: list[tuple[str, str]] = []  # (copy_id, message d'erreur)
 
-    # Mode APPEND : conserve les copies déjà traitées lors d'une reprise.
-    with open(out_path, "a", encoding="utf-8") as f_pred:
-        for copy in tqdm(copies_a_traiter, desc=f"Évaluation ({config.name})"):
-            # Une trace Langfuse par copie (no-op si Langfuse indisponible, trace vaut None).
-            with copy_trace(copy) as trace:
-                # try/except par copie : une erreur API sur une copie ne perd pas les précédentes.
-                try:
-                    prediction = scorer.score_copy(copy, reference_text)
-                except Exception as exc:  # noqa: BLE001 — on veut TOUT rattraper ici
-                    logger.error(
-                        "Échec sur la copie %s : %s. On passe à la suivante.",
-                        copy.copy_id,
-                        exc,
+    def _score_one(copy: Copy) -> _CopyOutcome:
+        """Score une copie et prépare ses lignes JSONL (exécuté dans un thread worker).
+
+        Aucune écriture fichier ni mutation d'état partagé ici : uniquement l'appel
+        modèle (thread-safe) et la trace Langfuse de la copie. Le résultat est
+        consommé dans le thread principal.
+        """
+        # Une trace Langfuse par copie (no-op si Langfuse indisponible, trace vaut None).
+        with copy_trace(copy) as trace:
+            try:
+                prediction = scorer.score_copy(copy, reference_text)
+            except Exception as exc:  # noqa: BLE001 — on veut TOUT rattraper ici
+                if trace is not None:
+                    trace.update(level="ERROR", status_message=str(exc))
+                return _CopyOutcome(copy.copy_id, "failed", error=str(exc))
+
+            if not prediction.transcribed:
+                if trace is not None:
+                    trace.update(
+                        level="WARNING",
+                        status_message="copie non transcrite",
+                        output={"transcribed": False, "n_attempts": prediction.n_attempts},
                     )
-                    failed_copies.append((copy.copy_id, str(exc)))
-                    if trace is not None:
-                        trace.update(level="ERROR", status_message=str(exc))
-                    continue
+                return _CopyOutcome(
+                    copy.copy_id, "non_transcribed", n_attempts=prediction.n_attempts
+                )
 
-                if not prediction.transcribed:
-                    non_transcrites.append(copy.copy_id)
-                    logger.warning(
-                        "Copie non transcrite après %d tentative(s) : %s (exclue des métriques).",
-                        prediction.n_attempts,
-                        copy.copy_id,
-                    )
-                    if trace is not None:
-                        trace.update(
-                            level="WARNING",
-                            status_message="copie non transcrite",
-                            output={"transcribed": False, "n_attempts": prediction.n_attempts},
-                        )
-                    continue
-
-                pred_by_id = {it.item_id: it for it in prediction.items}
-
-                n_items_copie = 0
-                n_accord = 0
-                for item_id, expert_code in zip(copy.item_ids, copy.expert_codes, strict=True):
-                    pred = pred_by_id.get(item_id)
-                    true_code = reference.normalize(expert_code, scheme)
-                    pred_code = reference.normalize(pred.code, scheme) if pred else "?"
-                    conf = pred.confidence if pred else 0.0
-                    record = {
+            pred_by_id = {it.item_id: it for it in prediction.items}
+            records = []
+            n_accord = 0
+            for item_id, expert_code in zip(copy.item_ids, copy.expert_codes, strict=True):
+                pred = pred_by_id.get(item_id)
+                true_code = reference.normalize(expert_code, scheme)
+                pred_code = reference.normalize(pred.code, scheme) if pred else "?"
+                records.append(
+                    {
                         "copy_id": copy.copy_id,
                         "item_id": item_id,
                         "y_true": true_code,
                         "y_pred": pred_code,
-                        "confidence": conf,
+                        "confidence": pred.confidence if pred else 0.0,
                         "transcription": pred.transcription if pred else None,
                         "comparaison": pred.comparaison if pred else None,
                         "raw_transcription": prediction.raw_transcription,
                     }
-                    f_pred.write(json.dumps(record, ensure_ascii=False) + "\n")
-                    n_items_copie += 1
-                    if pred_code == true_code:
-                        n_accord += 1
+                )
+                if pred_code == true_code:
+                    n_accord += 1
 
-                # Flush + fsync : garantit que la copie écrite survit à un crash ultérieur.
-                f_pred.flush()
-                os.fsync(f_pred.fileno())
+            if trace is not None and records:
+                accord_copie = n_accord / len(records)
+                trace.update(output={"n_items": len(records), "raw_agreement": accord_copie})
+                trace.score_trace(name="raw_agreement", value=accord_copie)
 
-                if trace is not None and n_items_copie:
-                    accord_copie = n_accord / n_items_copie
-                    trace.update(output={"n_items": n_items_copie, "raw_agreement": accord_copie})
-                    trace.score_trace(name="raw_agreement", value=accord_copie)
+            lines = "".join(json.dumps(r, ensure_ascii=False) + "\n" for r in records)
+            return _CopyOutcome(copy.copy_id, "ok", lines=lines)
+
+    def _consume(outcome: _CopyOutcome, f_pred: object) -> None:
+        """Écrit/comptabilise le résultat d'une copie (thread principal uniquement)."""
+        if outcome.status == "failed":
+            logger.error(
+                "Échec sur la copie %s : %s. On passe à la suivante.",
+                outcome.copy_id,
+                outcome.error,
+            )
+            failed_copies.append((outcome.copy_id, outcome.error))
+        elif outcome.status == "non_transcribed":
+            non_transcrites.append(outcome.copy_id)
+            logger.warning(
+                "Copie non transcrite après %d tentative(s) : %s (exclue des métriques).",
+                outcome.n_attempts,
+                outcome.copy_id,
+            )
+        else:  # "ok"
+            f_pred.write(outcome.lines)  # type: ignore[attr-defined]
+            # Flush + fsync : garantit que la copie écrite survit à un crash ultérieur.
+            f_pred.flush()  # type: ignore[attr-defined]
+            os.fsync(f_pred.fileno())  # type: ignore[attr-defined]
+
+    # Mode APPEND : conserve les copies déjà traitées lors d'une reprise.
+    with open(out_path, "a", encoding="utf-8") as f_pred:
+        desc = f"Évaluation ({config.name}, {workers} en parallèle)"
+        if workers <= 1:
+            # Chemin séquentiel (comportement historique), sans thread ni contexte copié.
+            for copy in tqdm(copies_a_traiter, desc=desc):
+                _consume(_score_one(copy), f_pred)
+        else:
+            # Chaque copie est soumise avec une COPIE du contexte courant, pour que la
+            # trace Langfuse hérite des attributs de session (propagate_attributes est
+            # actif dans le thread principal, pas dans les workers).
+            with ThreadPoolExecutor(max_workers=workers) as executor:
+                futures = [
+                    executor.submit(contextvars.copy_context().run, _score_one, copy)
+                    for copy in copies_a_traiter
+                ]
+                for future in tqdm(as_completed(futures), total=len(futures), desc=desc):
+                    _consume(future.result(), f_pred)
 
     if failed_copies:
         with open(failed_path, "w", encoding="utf-8") as f:
